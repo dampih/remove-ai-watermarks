@@ -15,27 +15,25 @@ from remove_ai_watermarks._text_mark_engine import TextMarkConfig, TextMarkEngin
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-# The sample is 1024x575: the visible wordmark is about 103x22 px and sits
-# 35 px from the right edge / 12 px from the bottom edge. Keep the locate box
-# generous enough for rerasterization, while using short-side scaling.
-WM_WIDTH_FRAC = 0.34
+WM_WIDTH_FRAC = 0.35
 WM_HEIGHT_FRAC = 0.11
-MARGIN_RIGHT_FRAC = 0.02
-MARGIN_BOTTOM_FRAC = 0.012
+MARGIN_RIGHT_FRAC = 0.015
+MARGIN_BOTTOM_FRAC = 0.008
 
 # Dola uses a light, low-saturation gray overlay like other AIGC marks.
 MAX_SATURATION = 55
 LOGO_MIN_LUMA = 145
 TOPHAT_DELTA = 10
 
-# Conservative gate: the repository's Dola cohort has weak separation. Strict
-# only avoids provenance turning unrelated bottom-right texture into a fill.
 DETECT_MIN_COVERAGE = 0.04
-DETECT_NCC_THRESHOLD = 0.52
+# Fixture rasterization scores ~0.89 and the supplied real sample ~0.83.
+# Keep a margin above the measured solid-blob false-positive (~0.25).
+DETECT_NCC_THRESHOLD = 0.28
 
 # Asset is 146x32 (Arial Bold ``Dola AI``), scaled against short side.
-_ALPHA_WIDTH_FRAC = 0.254
-_ALPHA_HEIGHT_FRAC = 0.0557
+# Measured on the user sample (1024x575): w=103 h=22 -> 0.179 / 0.0383 of short side.
+_ALPHA_WIDTH_FRAC = 0.179
+_ALPHA_HEIGHT_FRAC = 0.0383
 
 _CONFIG = TextMarkConfig(
     name="Dola AI",
