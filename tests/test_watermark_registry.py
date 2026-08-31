@@ -17,6 +17,7 @@ class TestCatalog:
         assert reg.mark_keys() == [
             "gemini",
             "doubao",
+            "dola",
             "jimeng",
             "qwen",
             "kling",
@@ -106,6 +107,7 @@ class TestScan:
         assert keys == {
             "gemini",
             "doubao",
+            "dola",
             "jimeng",
             "qwen",
             "kling",

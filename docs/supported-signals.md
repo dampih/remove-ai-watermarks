@@ -12,6 +12,7 @@ The `visible` command registers these mark keys:
 | --- | --- | --- | --- |
 | `gemini` | Google Gemini visible watermark (sparkle) | Usually bottom right | Detection includes a false positive gate. |
 | `doubao` | `豆包AI生成` | Bottom right | Vendor specific text detector. |
+| `dola` | `Dola AI` | Bottom right | Strict visual gate; calibrated from one supplied sample. |
 | `jimeng` | `★ 即梦AI` | Bottom right | Vendor specific text detector. |
 | `qwen` | `千问AI生成` | Bottom right | Strict visual gate. |
 | `kling` | `可灵AI 3.0` | Bottom right | Only calibrated variants are covered. |

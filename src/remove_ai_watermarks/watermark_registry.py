@@ -19,6 +19,7 @@ small worker; the heavy fill (MI-GAN / LaMa) is opt-in and chosen by the caller.
 Entries:
   - ``gemini`` -- Google Gemini / Nano Banana visible watermark (sparkle), bottom-right.
   - ``doubao`` -- ByteDance Doubao "豆包AI生成" text strip, bottom-right.
+  - ``dola`` -- ByteDance Dola "Dola AI" wordmark, bottom-right.
   - ``jimeng`` -- ByteDance Jimeng / Dreamina "★ 即梦AI" wordmark, bottom-right.
   - ``qwen`` -- Alibaba Cloud Qwen "千问AI生成" text strip, bottom-right.
   - ``kling`` -- Kuaishou Kling AI "可灵AI 3.0" text strip, bottom-right.
@@ -401,6 +402,7 @@ _engines: dict[str, Any] = {}
 _ENGINE_CLASS: dict[str, tuple[str, str]] = {
     "gemini": ("gemini_engine", "GeminiEngine"),
     "doubao": ("doubao_engine", "DoubaoEngine"),
+    "dola": ("dola_engine", "DolaEngine"),
     "jimeng": ("jimeng_engine", "JimengEngine"),
     "qwen": ("qwen_engine", "QwenEngine"),
     "kling": ("kling_engine", "KlingEngine"),
@@ -651,6 +653,13 @@ _REGISTRY: tuple[KnownMark, ...] = (
         "bottom-right",
         platform="ByteDance Doubao (visible 豆包AI生成 mark detected)",
         tc260_producer_codes=("91110102MACQD9K640", "doubao"),
+    ),
+    _text_mark(
+        "dola",
+        "Dola AI text",
+        "bottom-right",
+        platform="ByteDance Dola (visible Dola AI mark detected)",
+        tc260_producer_codes=("dola",),
     ),
     _text_mark(
         "jimeng",

@@ -794,6 +794,7 @@ Each vendor module supplies a `TextMarkConfig` and only the behavior that cannot
 be represented by the shared base:
 
 - [`doubao_engine.py`](../src/remove_ai_watermarks/doubao_engine.py)
+- [`dola_engine.py`](../src/remove_ai_watermarks/dola_engine.py)
 - [`jimeng_engine.py`](../src/remove_ai_watermarks/jimeng_engine.py)
 - [`qwen_engine.py`](../src/remove_ai_watermarks/qwen_engine.py)
 - [`kling_engine.py`](../src/remove_ai_watermarks/kling_engine.py)
