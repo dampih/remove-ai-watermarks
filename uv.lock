@@ -3298,6 +3298,7 @@ diffusion = [
     { name = "transformers" },
 ]
 gui = [
+    { name = "av" },
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "opencv-python-headless" },
@@ -3412,8 +3413,8 @@ requires-dist = [
     { name = "remove-ai-watermarks", extras = ["pixels"], marker = "extra == 'visible'" },
     { name = "remove-ai-watermarks", extras = ["qwen-zimage", "lama"], marker = "extra == 'text-restoration'" },
     { name = "remove-ai-watermarks", extras = ["video"], marker = "extra == 'dev'" },
+    { name = "remove-ai-watermarks", extras = ["video"], marker = "extra == 'gui'" },
     { name = "remove-ai-watermarks", extras = ["video", "heif", "detect", "trustmark", "text-restoration", "migan"], marker = "extra == 'all'" },
-    { name = "remove-ai-watermarks", extras = ["visible"], marker = "extra == 'gui'" },
     { name = "remove-ai-watermarks", extras = ["visible"], marker = "extra == 'lama'" },
     { name = "remove-ai-watermarks", extras = ["visible"], marker = "extra == 'migan'" },
     { name = "remove-ai-watermarks", extras = ["visible"], marker = "extra == 'video'" },

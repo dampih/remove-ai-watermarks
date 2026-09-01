@@ -77,9 +77,10 @@ heif = [
 ]
 visible = ["remove-ai-watermarks[pixels]"]
 # Qt6 desktop GUI (``remove-ai-watermarks-gui`` entry point). PyQt6-stubs is
-# included so pyright can type-check the GUI module.
+# included so pyright can type-check the GUI module. The video tab uses the
+# same PyAV runtime as the CLI, so the extra pulls in the video feature.
 gui = [
-    "remove-ai-watermarks[visible]",
+    "remove-ai-watermarks[video]",
     "PyQt6>=6.6",
     "PyQt6-stubs>=6.6",
 ]
