@@ -461,9 +461,9 @@ conditioning, never by copying original pixels.**
 
 > **Superseded in 0.24.0.** The `controlnet`, `sdxl`, `qwen` and `default` profiles
 > were removed, and a retired name is now rejected at parse time rather than routed
-> onward. `--pipeline` accepts only `qwen-zimage` (the default) and `sdxl-zimage`;
-> both are CUDA-only, both condition their global stage on a canny edge map, and both
-> run the same Z-Image face stage. The bullets below are a record of what was measured
+> onward. Current `--pipeline` values are `qwen-zimage` (the default),
+> `sdxl-zimage`, `chroma-zimage`, and `auto`; all are CUDA-only and share the
+> Z-Image face stage. The bullets below are a record of what was measured
 > on the removed profiles, kept because the oracle verdicts are still the evidence the
 > current design rests on.
 
@@ -779,5 +779,6 @@ initially took a flat `0.30` floor instead of the area curve. The later provider
 remeasurement established a common pass at `0.25` across three valid sources and
 separately repeated `QWEN_ZIMAGE_GOOGLE_STRENGTH = 0.27` across those sources and
 three accounts. OpenAI now has its own measured flat operating point; unknown
-content keeps the resolution curve. An explicit strength still wins. Certification artifacts: raiw-app
-`data/certification/text-restoration-2026-08-18/` (the failing re-baseline).
+content keeps the resolution curve. An explicit strength still wins.
+Certification artifacts: private archive `text-restoration-2026-08-18` (the
+failing re-baseline).

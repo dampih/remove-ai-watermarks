@@ -852,6 +852,17 @@ box grows), not the whole `footprint_mask`. Baidu extends right to the corner ta
 and LiblibAI extends left to the triangle logo; both inherit every guard around
 that arithmetic.
 
+Doubao is the deliberate exception because its captured alpha supplies more
+information than a rectangle. Its continuous top-hat response locates the mark,
+then `DoubaoEngine.footprint_mask` resizes the alpha to that same winning
+`match_box` and masks only the glyphs. The canonical 2048-pixel fixture has bright
+branch texture behind the bottom-edge wordmark; bounding the thresholded response,
+padding it, and dilating it produced a solid 404-by-134 mask clamped to the bottom
+and right edges. OpenCV then had no context beyond either edge and filled the hole
+with large triangular wedges. The aligned sparse mask keeps both frame edges
+untouched and still clears the detector. `force` cannot align a missing detection,
+so it retains the shared geometry-box fallback.
+
 Yuanbao uses the polarity-independent `contrast` front end because its standard
 two-line mark can be light on dark scenes or dark on light scenes. Its detector
 and footprint both use the same best-match box. The separate one-line overlay
@@ -944,10 +955,12 @@ is the source of truth for:
 - the SDXL global-stage checkpoint id (`SDXL_MODEL_ID`) and the Canny ControlNet id;
 - strength resolution for every profile.
 
-The current profiles are `qwen-zimage` (the default), `sdxl-zimage`, and
-`chroma-zimage`, and all three are CUDA-only. `controlnet`, `sdxl`, `qwen` and
-`default` were removed rather than kept as a CPU path, and are rejected rather
-than aliased onward. There is no content-dependent automatic router.
+The current profiles are `qwen-zimage` (the default), `sdxl-zimage`,
+`chroma-zimage`, and `auto`, and all four are CUDA-only. `controlnet`, `sdxl`,
+`qwen` and `default` were removed rather than kept as a CPU path, and are
+rejected rather than aliased onward. `auto` is a per-cohort engine router:
+chroma-zimage for OpenAI and Microsoft, qwen-zimage for Google, Meta, and
+unknown. It is not a content-class split inside one engine.
 
 `qwen-zimage` normally resolves global denoise from image area for unknown content.
 Measured provider cohorts bypass that curve with flat operating points. The values,
@@ -1186,7 +1199,15 @@ research doc is the honest read: at the strength each image actually needs,
 Chroma1 regenerates better almost everywhere except face identity (which the
 inherited Z-Image face stage supplies); at the flat worst-case floors it
 destroys dense text and face identity. The Google face-content arm is the
-first shipped piece of the content-adaptive policy.
+first shipped piece of the content-adaptive policy. A Meta arm was measured
+on 2026-08-30/31 (docs/chroma1-engine-research.md, expansion section) and
+does not ship: first-cleans from 0.03 to 0.10 form a continuum,
+`flat_ratio` overlaps the hard and easy clusters, and a high-flat
+easy-arm would misroute the harvest-1 portraits. The worst seed-0
+first-clean is still 0.10; botanical seeds 1 and 2 stay DETECTED at
+that rung, which is the margin the 0.17 floor already holds. OpenAI stays on the flat 0.09 floor: extra SynthID-positive carriers
+clear at or below 0.06, including a 2-face file, and only the 9-face
+grid needs 0.075 (seed-stable on 0, 1, 2 via openai.com/research/verify).
 
 ### SDXL plus Z-Image
 
