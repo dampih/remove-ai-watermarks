@@ -876,8 +876,33 @@ class VideoTab(QWidget):
         self.action_cb.addItems(
             ["Identify", "Remove visible marks", "Remove metadata", "Remove all"]
         )
+        self.action_cb.currentTextChanged.connect(self._on_action_changed)
         opts.addWidget(QLabel("Action:"))
         opts.addWidget(self.action_cb, 1)
+
+        self.mark_cb = QComboBox()
+        self.mark_cb.addItems(
+            [
+                "auto",
+                "gemini",
+                "doubao",
+                "dola",
+                "jimeng",
+                "qwen",
+                "kling",
+                "yuanbao",
+                "samsung",
+                "runninghub",
+                "baidu",
+                "liblib",
+                "microsoft",
+                "jimeng_pill",
+            ]
+        )
+        # Mark only applies to removal actions that touch visible marks.
+        self.mark_cb.setEnabled(False)
+        opts.addWidget(QLabel("Mark:"))
+        opts.addWidget(self.mark_cb, 1)
         opts.addStretch()
 
         btn_row = QHBoxLayout()
@@ -902,28 +927,41 @@ class VideoTab(QWidget):
             self.run_btn.setEnabled(True)
             self.log.info(f"Loaded: {self._path.name}")
 
+    def _on_action_changed(self, _action: str) -> None:
+        """Enable the Mark selector only for actions that use visible marks."""
+        uses_mark = self.action_cb.currentText() in ("Remove visible marks", "Remove all")
+        self.mark_cb.setEnabled(uses_mark)
+
     def _run(self) -> None:
         if self._path is None:
             return
         action = self.action_cb.currentText()
+        mark = self.mark_cb.currentText()
         self.log.info(f"Video {action} on {self._path.name}...")
         self.run_btn.setEnabled(False)
 
         src = self._path
 
         def _work() -> object:
+            resolved_mark = mark
+            if mark == "auto" and action in ("Remove visible marks", "Remove all"):
+                from remove_ai_watermarks import identify_video
+
+                identified = identify_video(src)
+                if identified.visible_mark is not None:
+                    resolved_mark = identified.visible_mark
             if action == "Identify":
                 from remove_ai_watermarks import identify_video
                 return identify_video(src)
             if action == "Remove visible marks":
                 from remove_ai_watermarks import remove_video_visible
-                return remove_video_visible(src)
+                return remove_video_visible(src, mark=resolved_mark)
             if action == "Remove metadata":
                 from remove_ai_watermarks import remove_video_metadata
                 return remove_video_metadata(src)
             # Remove all
             from remove_ai_watermarks import remove_video_all
-            return remove_video_all(src)
+            return remove_video_all(src, mark=resolved_mark)
 
         worker = Worker(_work)
         worker.signals.result.connect(self._on_result)
