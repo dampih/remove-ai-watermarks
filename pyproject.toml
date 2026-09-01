@@ -76,6 +76,13 @@ heif = [
     "pillow-heif>=0.13.0",
 ]
 visible = ["remove-ai-watermarks[pixels]"]
+# Qt6 desktop GUI (``remove-ai-watermarks-gui`` entry point). PyQt6-stubs is
+# included so pyright can type-check the GUI module.
+gui = [
+    "remove-ai-watermarks[visible]",
+    "PyQt6>=6.6",
+    "PyQt6-stubs>=6.6",
+]
 # Video visible removal uses the shared pixel runtime. PyAV packetizes processed
 # VFR frames with explicit PTS before system ffmpeg encodes them.
 video = [
@@ -178,6 +185,7 @@ all = ["remove-ai-watermarks[video,heif,detect,trustmark,text-restoration,migan]
 
 [project.scripts]
 remove-ai-watermarks = "remove_ai_watermarks.cli:main"
+remove-ai-watermarks-gui = "remove_ai_watermarks.gui:main"
 
 [project.urls]
 Repository = "https://github.com/wiltodelta/remove-ai-watermarks"
@@ -225,6 +233,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*.py" = ["G004", "S108", "S310", "T20"]
+"src/remove_ai_watermarks/gui.py" = ["G002", "G004"]  # LogPanel is a Qt widget, not stdlib logging
 "tests/*.py" = ["ANN", "S101", "S105", "S106", "S108"]
 "src/remove_ai_watermarks/_internal/watermark_remover.py" = ["S603", "S606", "S607"]  # nvidia-smi capability probe
 "src/remove_ai_watermarks/_internal/c2pa.py" = ["S110"]  # try-except-pass for corrupt file handling

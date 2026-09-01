@@ -26,8 +26,9 @@ flowchart LR
     Metadata --> MetadataOutput[Container with AI metadata removed]
 ```
 
-The `all` command runs visible removal, optional invisible regeneration, and
-metadata stripping in that order.
+The desktop interface is implemented in [`gui.py`](../src/remove_ai_watermarks/gui.py) and is exposed as the `remove-ai-watermarks-gui` console script. Install it with `uv sync --extra gui` (the extra includes the `visible` pixel runtime, PyQt6, and `PyQt6-stubs`). `MainWindow` contains tabs for visible removal, the full pipeline, batch processing, provenance identification, region erasing, video operations, and metadata operations.
+
+GUI operations that may take more than a few milliseconds run through `QRunnable`/`QThreadPool`; completion and errors are delivered back to widgets using Qt signals so the event loop remains responsive. Image previews convert the library's BGR NumPy arrays to `QPixmap` without changing the library API. The visible tab uses the same `remove_visible` path as the CLI for `auto` marks, including Dola AI detection. If no learned inpaint extra is installed, the UI inherits the registry's cv2 fallback warning. The invisible/full pipeline tab surfaces dependency errors instead of presenting an unavailable diffusion stage as successful.
 
 ## Command line interface
 
