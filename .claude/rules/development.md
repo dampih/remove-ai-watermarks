@@ -54,6 +54,9 @@ Do not classify an entire module as untestable because its main path downloads a
   stage's; `sdxl-zimage` shipped doing exactly that and crashed on every image with a
   face. When one profile inherits another's stage, guard the invariants that stage
   relies on, not just the code path.
+- the photo-classify gate in `test_classify.py`: DEFINITELY is ridge AND MLP,
+  POSSIBLY does not emit a provider, and `identify` does not import
+  `remove_ai_watermarks.classify`.
 - the `InvisibleOptions` defaults, in `test_api.py`. When one signature promises to
   mirror another, compare them field by field rather than pinning the values you happen
   to know about, so the next field added on one side and not the other fails at the
@@ -89,6 +92,23 @@ status set; `TestIdentifyRealSamples::test_no_committed_fixture_reports_a_truste
 is that guard. Read a capability the stack does not have as a missing input, never as a
 negative finding.
 
+## The docs are a seam, and they drift like one
+
+`tests/test_docs_cover_the_public_surface.py` reads the live Click tree and the
+live `InvisibleOptions` dataclass and requires every knob to be NAMED in the
+user-facing pages. The code-to-code seams were already guarded and the
+code-to-docs seam was not, so it drifted exactly the way an unguarded seam does:
+`docs/cli.md` named none of `--adaptive-polish`, `--controlnet-scale`,
+`--detect/--no-detect`, `--humanize`, `--strength`, `--tile-size`,
+`--tile-overlap` or `--unsharp`, and `docs/python-api.md` named 9 of the 16
+option fields.
+
+Group option spellings by the Click PARAMETER, never by string surgery on the
+names. A boolean pair can be spelled anything -- `--strip-metadata/--keep-metadata`,
+`--keep-standard/--remove-all` -- so deriving the partner from a `--no-` prefix
+silently splits those pairs and demands both halves. Either spelling documents
+the pair.
+
 ## One measurement, one gate seam
 
 A detector is split into a trust-level-blind scan and a verdict that applies the
@@ -103,6 +123,11 @@ rules follow, and both were broken in practice before they were written down:
 - Detection and the removal mask must read ONE sweep. The winning box travels on
   `TextMarkDetection.match_box` and the registry threads the detection into the mask
   builder; a mask path that re-runs its own sweep is how the two drift apart.
+- When the research lattice runtime in `scripts/synthid_runtime/` routes by image
+  geometry, preserve the returned `SynthIDDetection.detector` in score manifests
+  and downstream routers. Record an inactive expert as explicitly unsupported;
+  never attribute a routed large-image score to the fixed expert. This expert is
+  not part of the public package.
 
 The C2PA manifest-store JSON is NOT stable across reads: the reader regenerates manifest
 URNs and instance ids. Compare the derived `c2pa_info`, never the raw store.

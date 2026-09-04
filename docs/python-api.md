@@ -6,11 +6,28 @@ and pipeline modules are intended for maintainers and specialized workflows.
 Dependency groups are identical for the CLI and Python API. The default install
 covers metadata extraction, normalization, verdict logic, and stripping.
 Array/pixel APIs use `pixels`; visible removal uses `visible`; DWT-DCT detection
-uses `detect`; invisible image removal uses `qwen-zimage` and an NVIDIA GPU; and
+uses `detect`; pixel photo classification uses `classify`; invisible image removal uses `qwen-zimage` and an NVIDIA GPU; and
 visible video processing uses `video`. Video SynthID removal is a separate VAE
 path that still runs on CPU and combines `video` and `diffusion`. Add `heif`
 independently when path-based pixel APIs must decode HEIC, HEIF, or AVIF. See
 the complete [feature-extra matrix](installation.md#feature-extras).
+
+## Verify OpenAI SynthID
+
+```python
+import remove_ai_watermarks as raiw
+
+result = raiw.verify_openai_synthid("input.png", acknowledge_upload=True)
+print(result.status)
+```
+
+Official OpenAI JSON results expose `signal_family`,
+`provider_scope`, `backend`, `metadata_used_for_verdict`, and
+`pixels_preserved`. Remote transport and response failures raise `OpenAIProvenanceError`. Its
+`status_code`, `error_code`, `request_id`, `retry_after`, and `retryable`
+attributes let a caller implement bounded backoff or a circuit breaker without
+turning an API outage into a false `not_detected` result. One function call still
+performs at most one upload.
 
 ## Remove visible marks
 
@@ -33,9 +50,26 @@ The function returns:
 An empty `removed` list means that no registered visible mark was selected. It
 does not prove the image has no metadata or invisible watermark.
 
+Use the detailed form when the caller needs to distinguish a validated fill
+from a residual or a validator failure:
+
+```python
+report = raiw.remove_visible_detailed("watermarked.png", "clean.png")
+print(report.status)  # "no_watermark" | "cleaned" | "partial" | "unvalidated"
+for mark in report.marks:
+    print(mark.label, mark.status, mark.confidence_before, mark.confidence_after)
+```
+
+Each selected mark is localized and filled once. The same detector then checks
+the result without changing the mask or running another fill. `partial` means
+that detector still accepts a region overlapping the mask that was filled;
+`unvalidated` means the check failed, not that the mark remains. The legacy
+`remove_visible` tuple API performs the same check but intentionally discards
+the detailed status.
+
 ### Path input
 
-For a path input, `remove_visible`:
+For a path input, `remove_visible` and `remove_visible_detailed`:
 
 - reads metadata provenance for the default `auto` sensitivity;
 - preserves a separate alpha channel;
@@ -129,6 +163,31 @@ engine's own parameter names and defaults. `force`, which decides whether the
 engine runs at all, is a parameter of `remove_all` and `remove_batch` alongside
 `backend` and `sensitivity`.
 
+The complete field set, with the shipped defaults:
+
+| Field | Default | Effect |
+| --- | --- | --- |
+| `strength` | `None` | Denoising strength. `None` resolves per profile and vendor cohort. |
+| `pipeline` | `"qwen-zimage"` | Profile: `qwen-zimage`, `sdxl-zimage`, `chroma-zimage`, or `auto`. |
+| `vendor` | `None` | Strength cohort, and an assertion that the watermark is present. |
+| `seed` | `None` | `None` uses the certified seed 0. Removal near the floor is seed-dependent. |
+| `hf_token` | `None` | Hugging Face token for the model download; the environment and a local `.env` are read when unset. |
+| `humanize` | `0.0` | Analog film grain. 0 is off; 2.0-6.0 is the useful band. |
+| `unsharp` | `0.0` | Unsharp-mask sharpening. 0 is off. |
+| `adaptive_polish` | `None` | `None` lets the profile decide (off for `qwen-zimage`, on for `sdxl-zimage`); `True`/`False` override it. |
+| `max_resolution` | `0` | Cap the long side before diffusion. 0 keeps native geometry and the most detail. |
+| `controlnet_conditioning_scale` | `1.0` | Canny ControlNet conditioning on the global stage. Higher stays closer to the original structure and text. |
+| `cpu_offload` | `False` | Stream model components between CPU and GPU. Lower CUDA memory, slower. |
+| `tile` | `False` | Regenerate large inputs in overlapping tiles instead of downscaling. |
+| `tile_size` | `1024` | Tile side in pixels when `tile` is set. |
+| `tile_overlap` | `128` | Tile overlap in pixels. More overlap hides seams and costs time. |
+| `text_manifest` | `None` | Path to an operator-verified text manifest; see the text-restoration section. |
+| `fidelity_anchor` | `False` | Opt into the fidelity-anchor pass. |
+
+`tests/test_docs_cover_the_public_surface.py` fails when a field is added here
+and not to this table, because this seam had already drifted by eight fields
+before anything checked it.
+
 If AI metadata survives the strip, `remove_all` raises `MetadataStripIncomplete`
 **before** writing anything: an AI-readable output is worse than no output.
 
@@ -143,6 +202,34 @@ print(summary.invisible_unavailable)   # outputs that still carry the watermark
 
 `mode` is `all`, `visible`, `invisible`, or `metadata`. Pass a constructed
 `InvisibleEngine` as `engine` to load the model once for the whole directory.
+
+## Classify a photograph from pixels
+
+This is not provenance. `identify` does not call it. Install
+`remove-ai-watermarks[classify]` first.
+
+```python
+from pathlib import Path
+
+from remove_ai_watermarks.classify import classify_pixels
+
+result = classify_pixels(Path("input.png"))
+print(result.label, result.detector, result.provider)
+```
+
+`label` is `ai` only on a DEFINITELY detector result (ridge AND freeze MLP).
+POSSIBLY is `unknown`. Camera-like photographs are `human`. `provider` is
+`openai`, `google`, `muse-image`, or `tc260` only when `label` is `ai` and the 124-d
+head beats `no_ai` by the freeze margin. `tc260` is the China AIGC label
+standard (mixed producers), not a company. Otherwise it is `None`, including
+when 124-d extraction refuses the file.
+
+`device` is a library parameter: `None` / `"auto"` detect, `"cpu"` or `"cuda"`
+pin. It is not a CLI option.
+
+Missing extra raises `RuntimeError` with the quoted install command
+`'remove-ai-watermarks[classify]'`. Guide:
+[photo pixel classification](photo-classify.md).
 
 ## Inspect provenance
 
@@ -344,8 +431,8 @@ Timings and spatial artifacts are opt-in. Artifacts include image-identifying da
 such as a thumbnail and perceptual hash; aggregate feature families do not.
 
 `identify_from_evidence` does not reopen the source file by default: it evaluates
-metadata only, and registered visible marks and pixel-backed invisible watermarks
-remain in the path-based `identify` call.
+metadata only, and the pixel-backed checks remain in the path-based `identify`
+call: registered visible marks and open invisible-watermark decoders.
 
 Pass `image_path` together with `check_visible` or `check_invisible` to add those
 pixel detectors on top of the SAME evidence. That is how a caller asking one file
@@ -645,11 +732,13 @@ engine.remove_watermark(
 
 Install `remove-ai-watermarks[text-restoration]`. The manifest schema and safety
 constraints are documented in the CLI guide. The engine verifies its decoded RGB
-hash before loading the diffusion models and rejects SDXL, downscaling, and
-postprocessing combinations that were not evaluated. Tiling is also rejected because
-the combined tiled-restoration path has no provider-oracle calibration. `InvisibleOptions`
-exposes the same field for `remove_all`; after a visible-stage edit, the manifest must
-be built against the staged pixels rather than the pristine source.
+hash before loading the diffusion models. Qwen and Chroma reconstruct the donor with
+the VAE already loaded for the one profile selected by `auto`; no second generative
+profile runs. The engine rejects SDXL, downscaling, and postprocessing combinations
+that were not evaluated. Tiling is also rejected because the combined
+tiled-restoration path has no provider-oracle calibration. `InvisibleOptions` exposes
+the same field for `remove_all`; after a visible-stage edit, the manifest must be built
+against the staged pixels rather than the pristine source.
 
 Use manifest schema 1 for manually reviewed text plus script metadata. Automated
 operators that verify only text-region geometry should emit schema 2 lines with a
@@ -660,7 +749,8 @@ default** (`fidelity_anchor=False`): that whole-frame blend was measured to
 return detector-visible OpenAI SynthID on poster-scale manifests (official
 Content Provenance API, 2026-08-19 - detected x6 with the anchor, clean x6
 without it, controls and base outputs validated in the same sessions). Pass
-`fidelity_anchor=True` to reproduce the 0.27.0 research behavior.
+`fidelity_anchor=True` with `qwen-zimage` to reproduce the 0.27.0 research
+behavior. Chroma rejects that Qwen-specific reproduction flag.
 
 ### Drafting manifest lines
 

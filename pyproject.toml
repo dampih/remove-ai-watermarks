@@ -4,7 +4,7 @@
 # on it, including the ComfyUI node package. The console script below carries
 # the same weight, since users have it on PATH.
 name = "remove-ai-watermarks"
-version = "0.36.0"
+version = "0.37.1"
 description = "AI watermark remover for visible, invisible, and provenance marks in images and video"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -126,6 +126,9 @@ diffusion = [
 qwen-zimage = [
     "remove-ai-watermarks[diffusion]",
     "diffsynth>=2.0.17,<3",
+    # Chroma1-HD ships a binary spiece.model. Without the matching backend,
+    # Transformers falls through to tiktoken, which cannot parse that file.
+    "sentencepiece>=0.2.2,<0.3",
     "torchvision>=0.20.0",
 ]
 # Opt-in verified-text reconstruction over qwen-zimage. LaMa removes the changed
@@ -149,6 +152,20 @@ trustmark = [
     # TrustMark requires NumPy <2, whose last release has no CPython 3.13+
     # wheels. Keep this feature installable only on its real runtime range.
     "trustmark>=0.8.0; python_version < '3.13'",
+]
+# Metadata-free photo classifier (Model 1 then gated Model 2). CPU torch is
+# enough. identify never imports this extra. Weights download on first use.
+classify = [
+    "remove-ai-watermarks[pixels]",
+    "torch>=2.0.0",
+    "transformers>=5,<6",
+    "tokenizers>=0.22,<0.23",
+    "huggingface-hub>=0.20.0",
+]
+# Official remote OpenAI SynthID verification. The command strips AI provenance
+# metadata and proves pixel identity before upload; it is never called implicitly.
+verify = [
+    "openai>=2.52.0",
 ]
 # Universal region eraser backend -- big-LaMa via onnxruntime (Carve/LaMa-ONNX,
 # Apache-2.0). CPU, no torch. Model (~200 MB) is downloaded on first use and
@@ -182,7 +199,7 @@ dev = [
 ]
 # ``qwen-zimage`` already pulls ``diffusion``; naming both would suggest diffusion is
 # independently sufficient for a removal, which it is not.
-all = ["remove-ai-watermarks[video,heif,detect,trustmark,text-restoration,migan]"]
+all = ["remove-ai-watermarks[video,heif,detect,trustmark,text-restoration,migan,classify,verify]"]
 
 [project.scripts]
 remove-ai-watermarks = "remove_ai_watermarks.cli:main"
@@ -216,13 +233,13 @@ exclude = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "scripts"]
 addopts = "-v --tb=short"
 
 [tool.ruff]
 target-version = "py311"
 line-length = 120
-exclude = ["_refs"]
+exclude = ["_refs", ".local-eval"]
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
@@ -233,8 +250,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"scripts/*.py" = ["G004", "S108", "S310", "T20"]
-"src/remove_ai_watermarks/gui.py" = ["G002", "G004"]  # LogPanel is a Qt widget, not stdlib logging
+"scripts/**/*.py" = ["G004", "S108", "S310", "T20"]
 "tests/*.py" = ["ANN", "S101", "S105", "S106", "S108"]
 "src/remove_ai_watermarks/_internal/watermark_remover.py" = ["S603", "S606", "S607"]  # nvidia-smi capability probe
 "src/remove_ai_watermarks/_internal/c2pa.py" = ["S110"]  # try-except-pass for corrupt file handling
@@ -246,7 +262,7 @@ indent-style = "space"
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "strict"
-exclude = ["_refs"]
+exclude = ["_refs", ".local-eval"]
 
 [[tool.pyright.executionEnvironments]]
 root = "tests"

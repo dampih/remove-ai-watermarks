@@ -5,6 +5,7 @@ High-level API (lazy, so ``import remove_ai_watermarks`` stays cheap)::
     import remove_ai_watermarks as raiw
     raiw.remove_visible("in.png", "out.png")            # clean a file (provenance auto)
     result, removed = raiw.remove_visible(bgr_array)    # array -> array
+    report = raiw.remove_visible_detailed(bgr_array)    # cleaned / partial / unvalidated
     raiw.visible_provenance("in.png")                   # -> frozenset of confirmed vendors
     raiw.identify_video("in.mp4")                       # -> VideoProvenanceReport
     raiw.inspect_video_metadata("in.mp4")               # -> VideoMetadataReport
@@ -13,6 +14,7 @@ High-level API (lazy, so ``import remove_ai_watermarks`` stays cheap)::
     raiw.remove_video_metadata("in.mp4", "out.mp4")     # verified metadata strip
     raiw.remove_video_invisible("in.mp4", "out.mp4")    # oracle-certified SynthID removal
     raiw.remove_video_visible("in.mp4", "out.mp4")      # stable visible video-mark removal
+    raiw.verify_openai_synthid("in.png", acknowledge_upload=True)  # remote
 
 For a provenance verdict use the ``identify`` submodule::
 
@@ -32,13 +34,16 @@ _os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 _warnings.filterwarnings("ignore", message=r".*ImageProcessorFast.*")
 
 
-__version__ = "0.36.0"
+__version__ = "0.37.1"
 
 __all__ = [
     "BatchSummary",
     "InvisibleOptions",
     "MetadataStripIncomplete",
+    "OpenAIProvenanceError",
+    "OpenAISynthIDDetection",
     "RemoveAllResult",
+    "VisibleRemovalResult",
     "__version__",
     "identify_video",
     "inspect_video_metadata",
@@ -50,6 +55,8 @@ __all__ = [
     "remove_video_metadata",
     "remove_video_visible",
     "remove_visible",
+    "remove_visible_detailed",
+    "verify_openai_synthid",
     "visible_provenance",
 ]
 
@@ -59,10 +66,17 @@ if TYPE_CHECKING:
         InvisibleOptions,
         MetadataStripIncomplete,
         RemoveAllResult,
+        VisibleRemovalResult,
         remove_all,
         remove_batch,
         remove_visible,
+        remove_visible_detailed,
         visible_provenance,
+    )
+    from remove_ai_watermarks.openai_provenance import (
+        OpenAIProvenanceError,
+        OpenAISynthIDDetection,
+        verify_openai_synthid,
     )
     from remove_ai_watermarks.video import (
         identify_video,
@@ -83,9 +97,11 @@ def __getattr__(name: str) -> object:
         "InvisibleOptions",
         "MetadataStripIncomplete",
         "RemoveAllResult",
+        "VisibleRemovalResult",
         "remove_all",
         "remove_batch",
         "remove_visible",
+        "remove_visible_detailed",
         "visible_provenance",
     ):
         from remove_ai_watermarks import api
@@ -103,4 +119,8 @@ def __getattr__(name: str) -> object:
         from remove_ai_watermarks import video
 
         return getattr(video, name)
+    if name in ("OpenAIProvenanceError", "OpenAISynthIDDetection", "verify_openai_synthid"):
+        from remove_ai_watermarks import openai_provenance
+
+        return getattr(openai_provenance, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

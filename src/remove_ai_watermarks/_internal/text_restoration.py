@@ -1,4 +1,4 @@
-"""Opt-in restoration of verified text from a Qwen VAE reconstruction."""
+"""Opt-in restoration of verified text from a profile VAE reconstruction."""
 
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportUnknownParameterType=false, reportMissingTypeArgument=false, reportMissingTypeStubs=false, reportMissingImports=false, reportArgumentType=false, reportAssignmentType=false, reportReturnType=false, reportCallIssue=false, reportIndexIssue=false, reportOperatorIssue=false
 from __future__ import annotations
@@ -151,7 +151,7 @@ def restore_verified_text(
     donor: Image.Image,
     lines: tuple[VerifiedTextLine, ...],
 ) -> Image.Image:
-    """Erase candidate glyphs, then composite verified Qwen-VAE glyph cores."""
+    """Erase candidate glyphs, then composite verified profile-VAE glyph cores."""
     from remove_ai_watermarks import region_eraser
 
     if not region_eraser.lama_available():
@@ -162,7 +162,7 @@ def restore_verified_text(
     candidate_rgb = np.asarray(candidate.convert("RGB"))
     donor_rgb = np.asarray(donor.convert("RGB"))
     if source_rgb.shape != candidate_rgb.shape or source_rgb.shape != donor_rgb.shape:
-        raise ValueError("Source, candidate, and Qwen-VAE donor dimensions must match")
+        raise ValueError("Source, candidate, and profile-VAE donor dimensions must match")
 
     source_masks = [source_silhouette_mask(source_rgb, line.box, line.angle) for line in lines]
     for index, mask in enumerate(source_masks):

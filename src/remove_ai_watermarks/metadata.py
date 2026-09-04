@@ -803,8 +803,9 @@ def synthid_source(image_path: Path, *, c2pa_info: dict[str, Any] | None = None)
     None.
 
     The evidence is readable only while the C2PA manifest is intact. Absence is
-    not proof: C2PA can be stripped while the pixel watermark survives, and the
-    pixel watermark itself is not locally detectable (proprietary decoder).
+    not proof: C2PA can be stripped while the pixel watermark survives. This
+    metadata helper does not call the separate, geometry-limited local carrier
+    detector.
 
     Args:
         image_path: Path to the image (PNG, JPEG, WebP, or ISOBMFF container).
@@ -839,12 +840,11 @@ def synthid_source(image_path: Path, *, c2pa_info: dict[str, Any] | None = None)
     ai_source = b"trainedAlgorithmicMedia" in data or b"TrainedAlgorithmicMedia" in data
     if not (has_c2pa and ai_source):
         return None
-    from remove_ai_watermarks._internal.c2pa import soft_binding_vendors_in
+    from remove_ai_watermarks._internal.c2pa import soft_binding_registry_entries_in
 
-    # A scan that names its own forensic soft-binding algorithm carries that
-    # vendor's mark; the generic vendor-token inference must not add a second,
-    # differently-attributed invisible watermark from the same bytes.
-    if soft_binding_vendors_in(data):
+    # A declared watermark blocks a second, generic watermark attribution. A
+    # content fingerprint does not suppress independent SynthID evidence.
+    if any(entry.kind == "watermark" for entry in soft_binding_registry_entries_in(data)):
         return None
     matched = synthid_evidence_vendors_in(data)
     return ", ".join(matched) if matched else None
@@ -1183,7 +1183,7 @@ def get_ai_metadata(image_path: Path) -> dict[str, str]:
 
     # Non-PNG containers (JPEG/WebP/AVIF/MP4): extract_c2pa_info is PNG-only, so
     # fall back to the format-agnostic source check for the SynthID verdict and
-    # the soft-binding (forensic-watermark vendor) scan.
+    # the registered soft-binding display scan.
     if "synthid_watermark" not in result and (vendor := synthid_source(image_path)):
         result.setdefault("synthid_watermark", synthid_verdict(vendor))
     if "soft_binding" not in result:

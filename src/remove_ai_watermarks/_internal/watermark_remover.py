@@ -16,6 +16,7 @@ from remove_ai_watermarks._internal.watermark_profiles import (
     DEFAULT_PROFILE,
     INVISIBLE_EXTRA,
     PROFILE_CHOICES,
+    QWEN_ZIMAGE_PROFILE,
     REMOVAL_MODULES,
     SDXL_ZIMAGE_PROFILE,
     normalize_profile,
@@ -236,7 +237,7 @@ class WatermarkRemover:
         with Image.open(image_path) as opened:
             source = opened.convert("RGB")
 
-        # The auto router resolves per-image once the provenance vendor is
+        # The auto policy resolves per-image once the provenance vendor is
         # known, BEFORE the strength resolution so the right engine's floors
         # are used. If the vendor changed the engine, reset the cached pipeline.
         if self._auto:
@@ -244,13 +245,15 @@ class WatermarkRemover:
             if resolved != self.model_profile:
                 self.model_profile = resolved
                 self._qwen_zimage_pipeline = None
+        if text_manifest is not None and self.model_profile == SDXL_ZIMAGE_PROFILE:
+            raise ValueError("Verified text restoration is not supported by the sdxl-zimage profile")
+        if text_manifest is not None and tile:
+            raise ValueError("Verified text restoration is not calibrated with tiled diffusion")
+        if fidelity_anchor and self.model_profile != QWEN_ZIMAGE_PROFILE:
+            raise ValueError("The fidelity anchor is supported only by the qwen-zimage profile")
         resolved_strength = self._resolve_chroma_strength(strength, vendor, source)
         if not 0.0 <= resolved_strength <= 1.0:
             raise ValueError(f"Strength must be between 0.0 and 1.0, got {resolved_strength}")
-        if text_manifest is not None and self.model_profile in (SDXL_ZIMAGE_PROFILE, CHROMA_ZIMAGE_PROFILE):
-            raise ValueError("Verified text restoration is supported only by the qwen-zimage profile")
-        if text_manifest is not None and tile:
-            raise ValueError("Verified text restoration is not calibrated with tiled diffusion")
 
         result = self._load_qwen_zimage_pipeline().run(
             source,

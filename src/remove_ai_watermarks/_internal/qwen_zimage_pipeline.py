@@ -18,7 +18,6 @@ import os
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-import numpy as np
 from PIL import Image
 
 from remove_ai_watermarks._internal.two_stage_pipeline import (
@@ -28,6 +27,7 @@ from remove_ai_watermarks._internal.two_stage_pipeline import (
     _cache_static_prompt_embeddings,
     _resize_to_target,
     build_canny_control_image,
+    edge_pad_to_grid,
 )
 
 log = logging.getLogger(__name__)
@@ -236,17 +236,7 @@ class QwenZImagePipeline(TwoStageZImagePipeline):
 
         pipe, _controlnet_input_cls = self._load_global()
         source_width, source_height = image.size
-        pad_width = (-source_width) % 8
-        pad_height = (-source_height) % 8
-        padded = image.convert("RGB")
-        if pad_width or pad_height:
-            padded = Image.fromarray(
-                np.pad(
-                    np.asarray(padded),
-                    ((0, pad_height), (0, pad_width), (0, 0)),
-                    mode="edge",
-                )
-            )
+        padded = edge_pad_to_grid(image, 8)
         pipe.load_models_to_device(["vae"])
         tensor = pipe.preprocess_image(padded).to(device=self.device, dtype=self.torch_dtype)
         with torch.inference_mode():

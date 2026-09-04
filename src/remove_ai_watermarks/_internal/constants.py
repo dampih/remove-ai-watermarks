@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from remove_ai_watermarks._internal._generated_c2pa_soft_bindings import C2PA_SOFT_BINDING_ROWS
+
 
 def _tokens(value: str) -> tuple[str, ...]:
     return tuple(value.split("|"))
@@ -139,7 +141,26 @@ C2PA_AI_TOOLS = {
     )
 }
 
-C2PA_SOFT_BINDINGS = {
+
+@dataclass(frozen=True, slots=True)
+class C2paSoftBindingAlgorithm:
+    """One normalized entry from the official C2PA soft-binding registry."""
+
+    identifier: int
+    algorithm: str
+    kind: str
+    decoded_media_types: tuple[str, ...]
+    encoded_media_types: tuple[str, ...]
+    display_label: str
+    date_entered: str
+    resolution_apis: tuple[str, ...]
+    deprecated: bool
+
+
+# These compact historical labels are the public display contract. The generated
+# snapshot supplies every exact registered algorithm and its official-description
+# fallback, while these prefixes keep existing output concise and stable.
+_C2PA_SOFT_BINDING_LABEL_OVERRIDES = {
     b"com.adobe.trustmark": "Adobe TrustMark",
     b"com.adobe.icn": "Adobe Image Comparator Network",
     b"com.digimarc": "Digimarc Validate",
@@ -161,6 +182,19 @@ C2PA_SOFT_BINDINGS = {
     b"ai.contentlens": "ContentLens",
     b"io.iscc": "ISCC (content code)",
 }
+
+C2PA_SOFT_BINDING_REGISTRY = tuple(C2paSoftBindingAlgorithm(*row) for row in C2PA_SOFT_BINDING_ROWS)
+
+
+def _c2pa_soft_binding_label(entry: C2paSoftBindingAlgorithm) -> str:
+    encoded_algorithm = entry.algorithm.encode()
+    return next(
+        (label for prefix, label in _C2PA_SOFT_BINDING_LABEL_OVERRIDES.items() if encoded_algorithm.startswith(prefix)),
+        entry.display_label,
+    )
+
+
+C2PA_SOFT_BINDINGS = {entry.algorithm.encode(): _c2pa_soft_binding_label(entry) for entry in C2PA_SOFT_BINDING_REGISTRY}
 
 AI_GENERATOR_TOKENS = frozenset(
     {

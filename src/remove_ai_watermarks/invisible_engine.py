@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 
 from ._internal.watermark_profiles import (
     DEFAULT_PROFILE,
-    QWEN_ZIMAGE_PROFILE,
     REMOVAL_MODULES,
+    SDXL_ZIMAGE_PROFILE,
     resolve_adaptive_polish,
     resolve_seed,
 )
@@ -186,18 +186,19 @@ class InvisibleEngine:
             tile_size: Tile dimension in px (default 1024).
             tile_overlap: Overlap between adjacent tiles in px (default 128).
             text_manifest: Operator-verified text lines bound to the decoded source
-                pixels. Enables the experimental Qwen-VAE ``vae-glyphs`` post-pass.
-                Requires the ``text-restoration`` extra and the ``qwen-zimage``
-                profile. Incompatible with downscaling, humanize, unsharp, and
-                adaptive polish. Tiling is rejected because that combination has
-                no provider-oracle calibration.
+                pixels. Enables the experimental profile-VAE ``vae-glyphs`` post-pass.
+                Requires the ``text-restoration`` extra and either ``qwen-zimage``
+                or ``chroma-zimage``. Incompatible with downscaling, humanize,
+                unsharp, and adaptive polish. Tiling is rejected because that
+                combination has no provider-oracle calibration.
             fidelity_anchor: Blend 15% of the Qwen-VAE donor across the whole frame
                 before glyph restoration. OFF by default since 0.27.1: that global
                 blend was measured to return detector-visible OpenAI SynthID on
                 poster-scale manifests (detected x6 with the anchor vs clean x6
                 without it, base clean; official Content Provenance API,
                 2026-08-19 - docs/text-protection-research.md). ``True`` reproduces
-                the 0.27.0 research behavior. Requires ``text_manifest``.
+                the 0.27.0 research behavior. Requires ``text_manifest`` and the
+                ``qwen-zimage`` profile.
 
         Returns:
             Path to the cleaned image.
@@ -210,8 +211,8 @@ class InvisibleEngine:
         if fidelity_anchor and text_manifest is None:
             raise ValueError("fidelity_anchor requires a text manifest")
         if text_manifest is not None:
-            if self._remover.model_profile != QWEN_ZIMAGE_PROFILE:
-                raise ValueError("--text-manifest is supported only by the qwen-zimage profile")
+            if self._remover.model_profile == SDXL_ZIMAGE_PROFILE:
+                raise ValueError("--text-manifest is not supported by the sdxl-zimage profile")
             if tile:
                 raise ValueError("--text-manifest is not calibrated with --tile")
             if max_resolution != 0:

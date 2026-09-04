@@ -181,7 +181,7 @@ _ALIASES = {
     "auto": AUTO_PROFILE,
 }
 
-# The per-cohort engine router: which profile wins on which vendor, from the
+# The deterministic per-cohort selection policy: which profile wins on which vendor, from the
 # 2026-08-29/30 four-cohort calibration (docs/chroma1-engine-research.md).
 # chroma-zimage has lower floors AND better matched-strength fidelity on OpenAI
 # and Microsoft; qwen-zimage wins on Google and Meta. Unknown stays on qwen

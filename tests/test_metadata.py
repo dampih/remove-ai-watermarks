@@ -1615,12 +1615,12 @@ class TestAIGCRealSample:
 
 
 class TestSoftBinding:
-    """C2PA soft-binding alg identifier -> forensic-watermark vendor name."""
+    """C2PA soft-binding alg identifier -> registered display name."""
 
     def test_vendors_in_recognizes_known_algs(self):
         from remove_ai_watermarks._internal.c2pa import soft_binding_vendors_in
 
-        assert soft_binding_vendors_in(b"...alg...com.adobe.trustmark.P...") == ["Adobe TrustMark"]
+        assert soft_binding_vendors_in(b'...alg:"com.adobe.trustmark.P"...') == ["Adobe TrustMark"]
         assert soft_binding_vendors_in(b"com.digimarc.validate.1") == ["Digimarc Validate"]
         assert soft_binding_vendors_in(b"ai.steg.api blah") == ["Steg.AI"]
         # Registry-verified vendors added in v0.6.x.
@@ -1629,17 +1629,30 @@ class TestSoftBinding:
         assert soft_binding_vendors_in(b"com.aiwatermark.videoseal.1") == ["AIWatermark VideoSeal"]
         assert soft_binding_vendors_in(b"com.aiwatermark.audioseal.1") == ["AIWatermark AudioSeal"]
         assert soft_binding_vendors_in(b"io.iscc.v0") == ["ISCC (content code)"]
+        assert soft_binding_vendors_in(b"com.adobe.hiermark.A") == [
+            "Adobe Hierarchical Audio watermark (HierMark) variant A"
+        ]
+        assert soft_binding_vendors_in(b"com.adobe.flowmark.A") == ["Adobe FlowMark video watermarking variant A"]
 
     def test_vendors_in_empty_when_absent(self):
         from remove_ai_watermarks._internal.c2pa import soft_binding_vendors_in
 
         assert soft_binding_vendors_in(b"no soft binding here") == []
+        assert soft_binding_vendors_in(b"com.adobe.trustmark.P2") == []
 
     def test_get_ai_metadata_surfaces_soft_binding(self, tmp_path: Path):
         # Non-PNG binary-scan path: a manifest naming a soft-binding vendor.
         p = tmp_path / "fake.jpg"
         p.write_bytes(b"\xff\xd8\xff\xe1 c2pa jumb com.adobe.trustmark.P \xff\xd9")
         assert get_ai_metadata(p).get("soft_binding") == "Adobe TrustMark"
+
+    def test_fingerprint_does_not_suppress_raw_google_synthid(self, tmp_path: Path):
+        from remove_ai_watermarks.metadata import synthid_source
+
+        path = tmp_path / "google-fingerprint.jpg"
+        path.write_bytes(b"\xff\xd8\xff\xe1 c2pa jumb Google trainedAlgorithmicMedia io.iscc.v0 \xff\xd9")
+
+        assert synthid_source(path) == "Google LLC"
 
 
 class TestIptcAiFields:

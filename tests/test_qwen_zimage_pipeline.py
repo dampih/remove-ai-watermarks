@@ -1154,9 +1154,8 @@ def test_chroma_zimage_floors_to_its_own_latent_grid():
     assert chroma_target_size(3, 3) == (16, 16)
 
 
-def test_watermark_remover_rejects_text_manifest_for_chroma(tmp_path, monkeypatch):
-    """Verified text restoration needs the Qwen VAE donor; chroma-zimage and
-    sdxl-zimage must both be rejected at the boundary, not deep inside."""
+def test_watermark_remover_accepts_text_manifest_for_chroma_but_not_sdxl(tmp_path, monkeypatch):
+    """Chroma owns a VAE donor; SDXL still fails at the public boundary."""
     from remove_ai_watermarks._internal.text_restoration import VerifiedTextLine, VerifiedTextManifest
     from remove_ai_watermarks._internal.watermark_remover import WatermarkRemover
 
@@ -1165,10 +1164,22 @@ def test_watermark_remover_rejects_text_manifest_for_chroma(tmp_path, monkeypatc
     Image.new("RGB", (96, 80)).save(source)
     manifest = VerifiedTextManifest("0" * 64, 96, 80, (VerifiedTextLine((4, 4, 20, 16), "x", "alphabetic"),))
 
-    for profile in ("chroma-zimage", "sdxl-zimage"):
-        remover = WatermarkRemover(device="cuda", pipeline=profile)
-        with pytest.raises(ValueError, match="only by the qwen-zimage profile"):
-            remover.remove_watermark(source, text_manifest=manifest)
+    chroma = WatermarkRemover(device="cuda", pipeline="chroma-zimage")
+    chroma_runtime = MagicMock()
+    chroma_runtime.run.return_value = Image.new("RGB", (96, 80))
+    monkeypatch.setattr(chroma, "_load_qwen_zimage_pipeline", lambda: chroma_runtime)
+
+    chroma.remove_watermark(source, text_manifest=manifest)
+
+    assert chroma_runtime.run.call_count == 1
+    assert chroma_runtime.run.call_args.kwargs["text_manifest"] is manifest
+    with pytest.raises(ValueError, match=r"fidelity anchor.*qwen-zimage"):
+        chroma.remove_watermark(source, text_manifest=manifest, fidelity_anchor=True)
+    assert chroma_runtime.run.call_count == 1
+
+    sdxl = WatermarkRemover(device="cuda", pipeline="sdxl-zimage")
+    with pytest.raises(ValueError, match="not supported by the sdxl-zimage profile"):
+        sdxl.remove_watermark(source, text_manifest=manifest)
 
 
 def test_watermark_remover_dispatches_to_chroma_pipeline(monkeypatch):
@@ -1209,17 +1220,56 @@ def test_chroma_adaptive_polish_defaults_off():
     assert resolve_adaptive_polish(True, "chroma-zimage") is True
 
 
-def test_chroma_vae_roundtrip_raises_not_implemented():
-    """The base class provides no VAE donor for chroma-zimage; the failure must
-    be the explicit NotImplementedError, not an opaque crash from a missing
-    Qwen stack."""
+def test_chroma_vae_roundtrip_uses_deterministic_mode_and_restores_native_size(monkeypatch):
+    """The Chroma donor pads without distorting geometry and never samples."""
     import torch
 
     from remove_ai_watermarks._internal.chroma_zimage_pipeline import ChromaZImagePipeline
 
-    pipeline = ChromaZImagePipeline(device="cuda", torch_dtype=torch.bfloat16)
-    with pytest.raises(NotImplementedError, match="does not expose a VAE donor"):
-        pipeline._vae_roundtrip(Image.new("RGB", (32, 32)))
+    seen: dict[str, object] = {}
+    latent = torch.ones(1, 4, 4, 6)
+
+    class LatentDistribution:
+        def mode(self):
+            seen["mode_calls"] = int(seen.get("mode_calls", 0)) + 1
+            return latent
+
+        def sample(self, *_args, **_kwargs):
+            raise AssertionError("A verified-text donor must not sample VAE latents")
+
+    class FakeVae:
+        @staticmethod
+        def encode(tensor):
+            seen["encoded_shape"] = tuple(tensor.shape)
+            return type("Encoded", (), {"latent_dist": LatentDistribution()})()
+
+        @staticmethod
+        def decode(received, *, return_dict):
+            assert received is latent
+            assert return_dict is False
+            return (torch.zeros(1, 3, 32, 48),)
+
+    class FakeProcessor:
+        @staticmethod
+        def preprocess(image, *, height, width):
+            seen["preprocess"] = (image.size, height, width)
+            return torch.zeros(1, 3, height, width)
+
+        @staticmethod
+        def postprocess(decoded, *, output_type):
+            assert output_type == "pil"
+            return [Image.new("RGB", (decoded.shape[3], decoded.shape[2]))]
+
+    pipe = type("FakePipe", (), {"vae": FakeVae(), "image_processor": FakeProcessor()})()
+    pipeline = ChromaZImagePipeline(device="cpu", torch_dtype=torch.float32)
+    monkeypatch.setattr(pipeline, "_load_global", lambda: pipe)
+
+    result = pipeline._vae_roundtrip(Image.new("RGB", (35, 19)))
+
+    assert seen["preprocess"] == ((48, 32), 32, 48)
+    assert seen["encoded_shape"] == (1, 3, 32, 48)
+    assert seen["mode_calls"] == 1
+    assert result.size == (35, 19)
 
 
 def test_chroma_google_face_content_gets_the_lower_adaptive_floor():
@@ -1296,9 +1346,8 @@ def test_auto_profile_strength_uses_the_resolved_engine_floors(tmp_path, monkeyp
     assert kwargs["strength"] == pytest.approx(0.09)
 
 
-def test_auto_profile_text_manifest_stays_on_qwen(tmp_path, monkeypatch):
-    """Auto routes OpenAI to chroma-zimage, which rejects text manifests;
-    the rejection must reach the caller at the boundary."""
+def test_auto_profile_text_manifest_uses_the_measured_chroma_engine_once(tmp_path, monkeypatch):
+    """A manifest does not override the researched OpenAI-to-Chroma decision."""
     from remove_ai_watermarks._internal.text_restoration import VerifiedTextLine, VerifiedTextManifest
     from remove_ai_watermarks._internal.watermark_remover import WatermarkRemover
 
@@ -1308,5 +1357,12 @@ def test_auto_profile_text_manifest_stays_on_qwen(tmp_path, monkeypatch):
     manifest = VerifiedTextManifest("0" * 64, 96, 80, (VerifiedTextLine((4, 4, 20, 16), "x", "alphabetic"),))
 
     remover = WatermarkRemover(device="cuda", pipeline="auto")
-    with pytest.raises(ValueError, match="only by the qwen-zimage profile"):
-        remover.remove_watermark(source, vendor="openai", text_manifest=manifest)
+    runtime = MagicMock()
+    runtime.run.return_value = Image.new("RGB", (96, 80))
+    monkeypatch.setattr(remover, "_load_qwen_zimage_pipeline", lambda: runtime)
+
+    remover.remove_watermark(source, vendor="openai", text_manifest=manifest)
+
+    assert remover.model_profile == "chroma-zimage"
+    assert runtime.run.call_count == 1
+    assert runtime.run.call_args.kwargs["text_manifest"] is manifest

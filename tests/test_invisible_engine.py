@@ -59,7 +59,7 @@ class TestVerifiedTextMode:
         manifest = tmp_path / "manifest.json"
         manifest.write_text("{}", encoding="utf-8")
         cases = (
-            ("sdxl-zimage", {}, "qwen-zimage"),
+            ("sdxl-zimage", {}, "not supported by the sdxl-zimage profile"),
             ("qwen-zimage", {"tile": True}, "not calibrated with --tile"),
             ("qwen-zimage", {"max_resolution": 1024}, "max-resolution 0"),
             ("qwen-zimage", {"humanize": 1.0}, "humanize=0"),
@@ -113,7 +113,9 @@ class TestVerifiedTextMode:
             Image.open(kwargs["image_path"]).save(kwargs["output_path"])
             return kwargs["output_path"]
 
-        engine = self._engine()
+        # The public engine must not reject auto before WatermarkRemover resolves
+        # the measured per-vendor profile.
+        engine = self._engine("auto")
         engine._remover.remove_watermark = fake_remove
         monkeypatch.setattr(region_eraser, "lama_available", lambda: True)
 

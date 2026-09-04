@@ -43,13 +43,19 @@ explicitly names a tracked canonical result.
 | `visible_positives.py` | List corpus images carrying a registered visible mark. |
 | `visible_recall_sample.py` | Build an unbiased blinded sample for recall measurement. |
 | `visible_sheets.py` | Build blinded contact sheets for relaxation candidates. |
+| `retrain_photo_classify.py` | CPU-retrain the 2026-08-31 photo heads from a sha256-keyed cache pack, no images. |
+| `publish_photo_classify_hf.py` | Upload the photo-classify card and freeze weights to Hugging Face `wiltodelta/raiw-photo-classify`. Manual; the Action `publish-photo-classify-hf.yml` is the write-token path. |
+| `verify_engine_selection_fixtures.py` | Verify hashes, dimensions, and prompt pairing in the tracked auto-engine content matrix. |
 
 ## Research and diagnostic prototypes
 
 | Script | Purpose |
 | --- | --- |
+| `chroma_text_restoration_study.py` | Compare verified-text restoration for Qwen and Chroma on H100 without running both engines in production. |
 | `cjk_tail_probe.py` | Test a generic template for otherwise uncovered CJK labels. |
 | `controlnet_sweep.py` | Sweep the historical ControlNet removal prototype. |
+| `engine_selection_study.py` | Run one global engine at a time over the tracked prompt-matched content matrix. |
+| `analyze_engine_selection_study.py` | Reduce engine-study output to paired deltas and exact sign tests. |
 | `infer_text_lines.py` | Draft stable source-text lines without modifying pixels. |
 | `qwen_scrub_prototype.py` | Probe low-strength Qwen regeneration on a GPU. |
 | `selective_text_restoration.py` | Evaluate text restoration over a scrubbed image. |
@@ -62,6 +68,12 @@ explicitly names a tracked canonical result.
 | --- | --- |
 | `render_pill_silhouette.py` | Render the synthetic Jimeng pill silhouette. |
 | `render_vendor_silhouettes.py` | Render synthetic vendor text-mark silhouettes. |
+| `sync_c2pa_soft_bindings.py` | Validate the official C2PA soft-binding registry and refresh its pinned runtime snapshot. |
+
+`maintain.sh` and the CI lint job run `sync_c2pa_soft_bindings.py --check`, so an
+upstream registry change fails with the refresh command instead of silently
+leaving new algorithms unnamed. The check and runtime parser are read-only;
+running the sync command without `--check` is the explicit snapshot update.
 
 ## Shared helpers
 

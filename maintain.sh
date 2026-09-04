@@ -21,6 +21,7 @@ if ! grep -qE "No vulnerabilities or maintenance issues detected|All dependencie
     echo "maintain.sh: uv-secure reported a finding or failed before its verdict -- triage before committing." >&2
     exit 1
 fi
+uv run python scripts/sync_c2pa_soft_bindings.py --check
 uv run ruff check --fix
 uv run ruff format
 # Scoped to src/: a full-project pyright run OOM-crashes node on this ML-heavy

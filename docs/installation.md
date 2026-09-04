@@ -77,9 +77,11 @@ uv tool install --force "remove-ai-watermarks[qwen-zimage]"
 Both remaining profiles run a Z-Image face stage on the DiffSynth runtime, so
 both need this extra. The third profile, `chroma-zimage`, uses diffusers'
 ChromaImg2ImgPipeline instead of DiffSynth for its global stage but inherits
-the same face stage, so it needs this extra too. It includes the `diffusion`
-dependencies; `diffusion` on its own covers the torch and diffusers imports
-but not the face stage, so it is not enough to run a removal.
+the same face stage, so it needs this extra too. The extra also installs
+SentencePiece for Chroma1-HD's binary `spiece.model`; without that backend,
+Transformers cannot construct the Chroma tokenizer. It includes the `diffusion`
+dependencies; `diffusion` on its own covers the torch and diffusers imports but
+not the face stage or Chroma tokenizer, so it is not enough to run a removal.
 
 **An NVIDIA GPU is required.** `qwen-zimage`, `sdxl-zimage` and `chroma-zimage`
 are CUDA-only, and
@@ -106,17 +108,19 @@ application actually uses:
 
 | Extra | Capability | Automatically includes | Torch or model download |
 | --- | --- | --- | --- |
-| `pixels` | Shared BGR array and image-processing runtime | NumPy, headless OpenCV | No |
+| `pixels` | Shared BGR runtime and calibrated-size SynthID carrier detection | NumPy, headless OpenCV | No |
 | `heif` | HEIC, HEIF, and AVIF pixel decoding | pillow-heif | No |
 | `visible` | Visible mark detection, OpenCV inpainting, and manual erasing | `pixels` | No |
 | `video` | Visible video identification/removal and timestamp preservation | `visible`, PyAV | No |
 | `detect` | Open DWT-DCT detection for Stable Diffusion, SDXL, and FLUX | `pixels`, PyWavelets | No |
 | `trustmark` | Adobe TrustMark detection on Python 3.11-3.12 | trustmark | Yes |
+| `classify` | Metadata-free photo AI-versus-camera classifier plus gated provider | `pixels`, Torch, Transformers | Yes |
+| `verify` | Official remote OpenAI SynthID verification | OpenAI SDK | No |
 | `diffusion` | Torch and Diffusers runtime; video SynthID regeneration | `pixels`, Torch, Diffusers | Yes |
 | `migan` | MI-GAN ONNX fill backend | `visible`, ONNX Runtime | Model download, no Torch |
 | `lama` | big-LaMa ONNX fill backend | `visible`, ONNX Runtime | Model download, no Torch |
-| `qwen-zimage` | Invisible image-watermark removal, all CUDA-only profiles | `diffusion`, DiffSynth | Yes |
-| `text-restoration` | Opt-in verified Qwen-VAE glyph restoration | `qwen-zimage`, `lama` | Yes |
+| `qwen-zimage` | Invisible image-watermark removal, all CUDA-only profiles | `diffusion`, DiffSynth, SentencePiece | Yes |
+| `text-restoration` | Opt-in verified profile-VAE glyph restoration | `qwen-zimage`, `lama` | Yes |
 | `text-draft` | Draft OCR proposals for operator verification | PaddleOCR, PaddlePaddle | Model download, no Torch |
 | `all` | Every production feature available on the active Python | All compatible rows above | Yes |
 | `dev` | Tests, linting, typing, and upstream parity checks | `video`, `detect`, upstream invisible-watermark | Yes, for parity tests |
@@ -137,9 +141,11 @@ flowchart LR
     draft["text-draft"]
     heif
     trustmark
+    classify --> pixels
+    verify
 ```
 
-`heif`, `trustmark`, and `text-draft` are independent branches. Combine them
+`heif`, `trustmark`, `verify`, and `text-draft` are independent branches. Combine them
 explicitly with another feature when required. `text-draft` is excluded from
 `all` because it proposes unverified OCR annotations and is not a production
 removal path. TrustMark requires NumPy 1.x, which has no
@@ -162,6 +168,9 @@ uv tool install --force "remove-ai-watermarks[video]"
 # DWT-DCT and TrustMark detection without diffusion removal
 uv tool install --force "remove-ai-watermarks[detect,trustmark]"
 
+# Official OpenAI SynthID verification
+uv tool install --force "remove-ai-watermarks[verify]"
+
 # Every production capability compatible with this Python
 uv tool install --force "remove-ai-watermarks[all]"
 
@@ -173,6 +182,13 @@ uv tool install --force "remove-ai-watermarks[migan,detect]"
 do not install libheif. `detect` uses the in-tree torch-free decoder and does
 not install the upstream `invisible-watermark` package. Optional models download
 their weights on first use.
+
+The `verify` extra makes an explicit remote request. The
+`verify-openai-synthid` command first removes AI provenance metadata from a
+temporary copy, checks that its decoded pixels are unchanged, and then uploads
+that copy to OpenAI. It needs `OPENAI_API_KEY`; the command never runs from
+`identify` and refuses to upload without `--acknowledge-upload`. The Python API
+requires the equivalent explicit `acknowledge_upload=True` argument.
 
 The old `gpu` and `remove` aliases are intentionally not provided. Use
 `diffusion` and `visible` respectively.

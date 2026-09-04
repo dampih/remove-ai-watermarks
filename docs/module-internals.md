@@ -11,7 +11,8 @@ updated in the same change.
 
 ## Architecture
 
-The package has four main paths:
+The package has four main paths, plus an opt-in pixel classifier that is not
+on the provenance or removal graph:
 
 ```mermaid
 flowchart LR
@@ -19,16 +20,20 @@ flowchart LR
     Input --> Visible[Visible mark removal]
     Input --> Invisible[Diffusion regeneration]
     Input --> Metadata[Metadata stripping]
+    Input --> Classify[classify_pixels]
 
     Identify --> Report[ProvenanceReport]
     Visible --> VisibleOutput[Localized and filled image]
     Invisible --> InvisibleOutput[Regenerated image]
     Metadata --> MetadataOutput[Container with AI metadata removed]
+    Classify --> PixelClassification
 ```
 
-The desktop interface is implemented in [`gui.py`](../src/remove_ai_watermarks/gui.py) and is exposed as the `remove-ai-watermarks-gui` console script. Install it with `uv sync --extra gui` (the extra includes the `visible` pixel runtime, PyQt6, and `PyQt6-stubs`). `MainWindow` contains tabs for visible removal, the full pipeline, batch processing, provenance identification, region erasing, video operations, and metadata operations.
+`identify` does not call `classify_pixels`. `has_invisible_target` and `all`
+do not read it.
 
-GUI operations that may take more than a few milliseconds run through `QRunnable`/`QThreadPool`; completion and errors are delivered back to widgets using Qt signals so the event loop remains responsive. Image previews convert the library's BGR NumPy arrays to `QPixmap` without changing the library API. The visible tab uses the same `remove_visible` path as the CLI for `auto` marks, including Dola AI detection. If no learned inpaint extra is installed, the UI inherits the registry's cv2 fallback warning. The invisible/full pipeline tab surfaces dependency errors instead of presenting an unavailable diffusion stage as successful.
+The `all` command runs visible removal, optional invisible regeneration, and
+metadata stripping in that order.
 
 ## Command line interface
 
@@ -84,6 +89,8 @@ Regression coverage:
 points:
 
 - `remove_visible`
+- `remove_visible_detailed`, returning a `VisibleRemovalResult` with per-mark
+  post-fill validation
 - `visible_provenance`
 
 and the image pipeline that the `all` and `batch` commands are thin wrappers
@@ -116,9 +123,9 @@ The package root exposes all of them lazily through
 [`__getattr__`](../src/remove_ai_watermarks/__init__.py), keeping a plain package
 import free of the heavier image and model imports.
 
-For path inputs, `remove_visible` reads provenance metadata, preserves alpha,
-and optionally writes and strips metadata. Array inputs are treated as BGR
-arrays and have no file provenance or separate alpha plane.
+For path inputs, both visible-removal entry points read provenance metadata,
+preserve alpha, and optionally write and strip metadata. Array inputs are
+treated as BGR arrays and have no file provenance or separate alpha plane.
 
 When no visible mark is removed, a same-format path copy preserves the original
 bytes. `write_noop=False` leaves the requested output path untouched instead.
@@ -414,13 +421,24 @@ type. Unreachable manifests remain excluded.
 Reachable `c2pa.soft-binding*` assertions retain their exact `alg` and bounded,
 printable block `value` in addition to the normalized vendor label. A block value
 without its algorithm is not surfaced because it cannot be attributed to a
-decoder or registry entry. `com.microsoft.invismark.1` uses that value as the
+decoder or registry entry. The labels and watermark/fingerprint classification
+come from the generated `_internal/_generated_c2pa_soft_bindings.py` snapshot of
+the official C2PA registry. Refresh it with
+`uv run python scripts/sync_c2pa_soft_bindings.py`; the command validates the
+upstream schema invariants, records the exact source revision and writes a
+deterministic module. Runtime inspection remains offline, and registry membership
+is name-only evidence rather than proof that a compatible decoder ships.
+
+`com.microsoft.invismark.1` uses its block value as the
 pixel-watermark identifier in Microsoft Paint output. An InvisMark soft binding
 keeps the invisible-removal gate fail-safe even when the C2PA asset binding has
 since become invalid, because metadata damage does not prove the pixel carrier
 disappeared. `identify` retains the generic `soft_binding` signal for schema-1
 compatibility and adds `invismark` as the stable pixel-removal signal.
-Content-fingerprint soft bindings do not trigger pixel regeneration.
+Registry entries of type `fingerprint` remain durable-provenance signals but are
+not added to the watermark inventory, do not trigger pixel regeneration, and do
+not suppress independently established SynthID watermark evidence. A registered
+watermark or an unknown soft-binding algorithm keeps that inference fail-safe.
 
 The SDK default enables trust verification but supplies no production trust
 anchors. Consequently, an installation without an explicitly maintained C2PA
@@ -534,7 +552,382 @@ metadata extraction from verdict logic:
   both extractors reach the same answer. It did not, and the record path silently
   reported no SynthID for images the file path flagged.
 - `identify` preserves the path-based API and adds the optional registered
-  visible-mark and open invisible-watermark decoders after extraction.
+  visible-mark and open invisible-watermark detectors after extraction.
+
+### SynthID periodic carrier detector (research only)
+
+The local lattice expert is not part of the public package. Runtime code lives
+in [`scripts/synthid_runtime/`](../scripts/synthid_runtime/) and the campaign
+log is [`synthid-detector-research.md`](synthid-detector-research.md). The
+notes below are the calibration history of that research expert.
+
+[`synthid_detector.py`](../scripts/synthid_runtime/synthid_detector.py) is the
+runtime form of the frozen 2048x2048 periodic-tile experiment. It folds a
+Gaussian high-pass residual modulo 16x16 within a calibrated pixel-count range
+and compares the normalized RGB tile with the bundled float64 template
+`scripts/synthid_runtime/synthid_periodic_tile_2048_v1.npz`. Exact multiples use the original
+reshape-and-mean path; other sizes use count-correct modulo folding,
+without resize. Channels are filtered and folded sequentially, and partial edge
+blocks are accumulated without a full-frame padding buffer so the 18-megapixel
+ceiling does not require multiple three-channel float workspaces. The model hash
+is pinned by a test, and the unchanged operating threshold is
+`0.17357069773071196` through 10 megapixels.
+
+That fixed threshold is not production-qualified. A later source-fresh
+Open Images test-split challenge produced 5 crossings among the 211 images in
+its supported geometry. A precision-first `0.28` replacement is frozen as a
+research candidate after retaining all 12 available source-diverse native
+positives and rejecting those five crossings. It then failed the second
+untouched holdout at 1/213, with score `0.322542963`. The replacement is
+rejected and fixed-v2 remains an explicit diagnostic only.
+
+The direct API returns `detected`, `indeterminate`, or `unsupported`. Passing
+`register_scale=False` selects fixed-v2 from 1,000,000 through 10,000,000
+decoded pixels as an explicit diagnostic. Its frozen threshold accepted
+none of 5,000 public COCO views balanced across every observed target geometry,
+and none of a separate 5,000-view challenge over 256 generated geometries
+covering every pair of modulo-16 edge remainders. The original 2048x2048
+verdicts and exact scores remain unchanged. Runtime matches do not attribute a
+provider. `identify` adds only positive matches as high-confidence
+evidence and never turns a local negative into a clean verdict.
+The result envelope also names the signal family, provider scope, backend,
+whether metadata contributed to the verdict, whether pixels were preserved,
+and an explicit reason for unsupported or indeterminate results. These fields
+are shared with the official OpenAI verifier's JSON boundary.
+
+The production router selects `synthid-periodic-tile-large-v1` above 10 through 18
+megapixels when both dimensions are at least 2,048 pixels. It evaluates all
+phase-aligned 2,048-square windows and combines the minimum fixed-template,
+Red-minus-Green, and Blue-minus-Yellow spatial correlations with the most
+negative Blue-minus-Yellow mid-band correlation. The 3072x5504 portrait
+geometry also applies a Green mid-band alias veto. Each component is normalized
+to its frozen gate and the public threshold is `1.0`.
+
+All 37 inferred large candidates cross the rule, and all seven metadata-free,
+pixel-identical candidates checked by the official Gemini verifier were
+detected. The constants rejected all 17,417 exposed external controls. A
+post-freeze production-path challenge then rejected all 2,637 decoded-pixel-
+unique controls drawn from 2,000 COCO images excluded from the earlier large
+color-phase challenge and 637 deduplicated Picsum controls. Four large
+geometries and four resampling kernels were balanced; the maximum score was
+`0.0592777965`. The source collections were not freshly acquired, so this is a
+feature-unseen holdout rather than a fresh-source estimate.
+
+A separate post-freeze Open Images download yielded 41 completed,
+decoded-pixel-unique controls after excluding incomplete `.aria2` files and all
+prior Open Images hashes. The frozen production path accepted 0/41 and reached
+a maximum score of `0.4083013324`. This source-fresh audit is too small to
+replace the main holdout interval but checks the acquisition boundary.
+
+The same seven official positives were then re-encoded at unchanged dimensions.
+JPEG-95 and JPEG-90 each reduced detection from 7/7 native files to 0/7. The
+large operating point is therefore native-pixel and lossless-copy support, not
+a codec-robust claim.
+
+Arbitrary geometry is not the same as arbitrary spatial resampling. On a
+stratified 80-image fixed-positive sample, one-step resizes at seven nonidentity
+scales from 0.5 through 1.5 reduced the unchanged 16x16 detector from 80 accepted
+sources to zero at every scale. Restoring the original geometry recovered 58-80
+sources, showing that the carrier period scaled with the pixels. A discovery
+bank that scaled the template to integer periods 8, 10, 12, 14, 18, 20, and 24
+was promising: a threshold frozen above 3,000 resized COCO controls accepted no
+view in a 2,000-control final partition and accepted 672 of 800 source-disjoint
+provider positives. It also stayed below threshold on the tracked OpenAI and
+Adobe controls. The branch remains research-only because noninteger periods at
+scales 0.8, 0.9, 1.1, 1.2, and 1.333 collapsed, while separate per-period
+thresholds accepted five final controls. The runtime therefore keeps only the
+fixed 16-pixel lattice.
+
+A follow-up fractional-period probe sampled the 30 strongest template harmonics
+over a continuous 7.5-24.5 period range. The correct period appeared within
+0.05 pixels among the top three candidates for 58 of 60 transformed positives.
+Testing nine neighboring reconstructed geometries then recovered 44 of 60 at
+the native threshold, compared with an upper bound of 48 when the true source
+geometry was supplied. The complete search still failed its small frozen
+control split: a threshold above 250 development controls accepted two of 150
+final controls. Multiplying the canonical score by spectral-period confidence
+also accepted two. That baseline was rejected rather than shipped at its
+discovery threshold.
+
+The research-only
+[`synthid_affine_lattice_probe.py`](../scripts/synthid_affine_lattice_probe.py)
+adds split-confirm synchronization. It estimates complex harmonic coherence on
+one checkerboard of patches, confirms the selected period on the other, and
+reports amplitude-aware confirmation, a locally content-whitened multichannel
+code match, and phase-preserving and cyclically registered template scores. A
+0.1-pixel grid recovered the expected
+12.8, 14.4, 17.6, and 19.2 periods in 20/20 transformed views from five official
+positive parents. A provisional conjunction accepted none of 800 corresponding
+views from 200 oracle-negative parents, none of 469 OpenAI-labeled rows, and
+three of 276 broad non-Google rows whose TC260 or Samsung provenance prevents
+treating them as clean oracle negatives. This probe is not runtime routing:
+positive diversity is still inadequate, period 8 remains rejected, and the
+amplitude stage currently handles isotropic scale at zero rotation only. Full
+protocol and caveats are in the detector research plan.
+
+The whitened match uses neighboring noncarrier bins to estimate complex
+Green/opponent-color covariance around every selected harmonic. It corrected a
+period-24 alias on one native official positive, giving the broad native search
+the correct period 16 on all five ordinary-size positives. It was retained only
+as a candidate reranker: its positive-to-negative margin was smaller than the
+existing spatial-template margin in both the native pilot and a locked 0.8
+resize challenge. Two of the three TC260/Samsung-provenance challenge crossings
+also matched the full whitened code more strongly than the weakest official
+large positive, so the pixel result identifies a compatible signal family, not
+a provider.
+
+The same probe also exposes a payload-agnostic H5 confirmation. It estimates a
+complex harmonic vector independently on the two checkerboards and measures
+their fixed relative-phase inner product; the codeword need not match the known
+template. Free cyclic-shift selection was rejected because natural phase aliases
+overlapped the controls. The fixed all-harmonic statistic separated five native
+official positives from 130 controls with margin `0.1619`, and five 0.8-resized
+views from 200 fresh-parent controls with margin `0.1541`; all seven large
+official positives also passed the observed gap. It remains research-only
+because these tests supplied the period, reuse one negative source family, and
+contain only 12 independent positive parents.
+
+The separate research-only
+[`synthid_cyclostationary_probe.py`](../scripts/synthid_cyclostationary_probe.py)
+measures full complex cross-channel spectral correlation at carrier shifts
+against neighboring-shift same-image nulls. It recognizes synthetic amplitude
+modulation and rejects both independent noise and a purely additive carrier.
+The real native pilot overlapped completely: five official-positive joint
+contrasts ranged from `-0.0027` to `0.0337`, while 130 controls reached `0.0593`.
+The cyclostationary branch is rejected rather than tuned on new frequency bands.
+
+The affine-lattice research CLI also supports symmetric in-memory JPEG and
+top-left crop challenges. At fixed native period 16, codec-specific
+phase-preserving template thresholds retained all five repeated positive views
+and accepted none of 80 locked controls at JPEG qualities 95, 90, and 80. The
+locked margins declined from `0.1054` to `0.0257`; whitened and unknown-codeword
+scores were rejected for lossy JPEG. A separate registered crop conjunction
+retained all five views and accepted none of 80 controls after both 5% and 10%
+top-left crops, with registered-template margins above `0.22`. These are
+research pilots, not runtime experts: the period was supplied, positive parents
+were reused, and only one codec implementation and one negative family were
+tested.
+
+The `register_scale=True` path is the calibrated ordinary-size production
+expert. It
+keeps the harmonic search, adds three-level scale-space consistency and quadrant
+agreement. Its calibrated decision requires the canonical winner to be the
+strongest spectral-period candidate, its three-way amplitude to cross the
+threshold for that period bin, and both independent high-frequency template
+bands to correlate by at least `0.075`. The public registered score is the
+minimum normalized margin across those gates, so its decision threshold is
+`1.0`.
+
+The earlier single-threshold version produced 68 false positives among 11,273
+symmetrically downscaled Spaces controls. A top-candidate plus period-bin version
+removed those but still produced 6 false positives among 1,000 source-independent
+Open Images controls. The high-band gate removed them and then accepted none of
+499 previously untouched Open Images reserve controls. The resulting rule
+retained 229 of 355 source-disjoint transformed positives: 0/65 at scale 0.5 and
+229/290 from scale 0.65 through 1.5. The explicit period-8 rescue is rejected
+because resize lattices fully overlap its positive distribution.
+
+A subsequently frozen 1,000-image Open Images reserve accepted zero in
+registered mode. The fixed expert supported only 81 of those geometries and
+accepted seven, so fixed and registered results cannot safely be unioned. In
+overlapping geometry the registered decision remains the validated path;
+fixed-only evidence is a diagnostic rather than a universal-cascade positive.
+
+A later source-fresh 3,000-image Open Images test-split challenge superseded the
+registered-v2 precision claim: it accepted 4 of 2,997 supported controls. The
+registered-v3 confirmation uses disjoint patch groups for phase, cyclic
+amplitude, and held-out-codeword evidence. It rejected all four crossings,
+retained 147 of 148 base-accepted source-diverse positives, and retained all 359
+base-accepted views in a dense 0.65-1.50 transform matrix over 12 independent
+parents. Frozen unchanged, it then accepted 0/2,996 controls from a second
+nonoverlapping Open Images cohort and 0/2,366 supported controls from a
+3,000-image COCO second-family challenge. Registered-v3 is now the default
+ordinary-size positive route. The exact gates, acquisition hashes, and rejected
+weak-signal rescue are recorded in the detector research plan.
+
+Every one of those control rates is photographic. Against 223 corpus images
+whose C2PA names a non-Google generator, the unchanged entry point accepted 29
+(`0.130`, Adobe Firefly `0.241`, highest foreign score `3.01`), all from
+registered-v3. The branch reads a lattice shared across generation pipelines,
+which is why it must not be reported as a watermark. The public `identify`
+path no longer calls this expert.
+
+The branch is also phase-locked to the image origin, exactly like the large
+expert. A two-pixel diagonal crop killed all 28 in-geometry foreign detections
+and all 8 detected Google provenance positives (maximum remaining scores
+`0.779` and `0.311` against the `1.0` threshold); the signal recovers only at
+offsets that are multiples of four. Registered-v3 therefore detects the same
+crop-destroyed generation-pipeline lattice as `large-v1`, on ordinary sizes.
+
+When registered-v3 abstains, opponent-registered-v1 searches the same frozen
+template in Red-minus-Green and Blue-minus-Yellow space. It reranks three
+separated scale candidates with fixed RGB and two spatial opponent-color gates,
+then accepts only periods 7.9-12.0 on 1-10 megapixel rasters whose sides are at
+least 768 pixels. Period-8 candidates additionally require Red-Green and
+Blue-Yellow 8-pixel edge ratios no greater than `1.05`; this vetoes the
+deterministic JPEG block lattice without using container metadata. The final
+rule recovered 49/49 lossless 0.5x-0.75x views from seven official-positive
+parents. It rejected all 1,790 measured period-8 codec crossings, while 350
+identically resized controls had no base crossing and the earlier period-band
+rule accepted 0/1,000 post-freeze Picsum controls. Period 12.8 remains excluded,
+and lossy JPEG/WebP views remain inconclusive.
+
+The runtime precedence is registered-v3, the bounded opponent fallback, then
+large-v1 above 10 megapixels. Passing `register_scale=False` selects the legacy
+fixed diagnostic explicitly. The research bank in
+`scripts/synthid_routed_expert_bank.py` keeps all three observations for audits.
+Neither runtime nor research routing returns a clean-image verdict.
+
+An unchanged registered challenge from 10 to 18 megapixels retained only 1 of
+37 Google candidates and zero of 89 non-Google controls. Twenty-eight positives
+cleared amplitude, 21 had matching spatial and spectral periods, but only three
+cleared high-band agreement. The 10-megapixel ceiling therefore remains.
+Phase-aligned 2,048-square fixed windows did not provide a fallback: median
+consensus retained 36 positives and accepted 10 controls, while all-window
+consensus retained 36 and accepted eight.
+One frozen full-frame pre-resize to eight megapixels also retained only the same
+1 of 37 positives and zero controls; just three positives cleared high-band
+agreement. Large images therefore cannot be routed through a canonical-size
+registered fallback; the later native opponent-color branch is separate.
+The remaining phase-aligned window variants closed this branch: a single center
+2,048-square registered window retained 1 of 37 positives and zero of 89
+controls, while accepting any phase-aligned 2,048-square window retained 2 of
+37 and zero controls. The latter control maximum was already 0.968 against the
+1.0 decision threshold. Neither the coverage nor the exposed specificity
+margin supports a registered-window expert; these results do not apply to the
+later native opponent-color branch.
+
+A separate half-scale patch-consensus branch initially looked promising. Its
+64-pixel, 90th-percentile patch statistic retained 33 of 49 validation positives
+and zero of 166 controls, then 27 of 52 locked-test positives and zero of 140
+controls. The frozen broad challenge rejected it: 61 of 10,906 symmetrically
+half-scaled Spaces controls and 22 of 1,000 independent Open Images controls
+crossed the unchanged threshold. A post-challenge Green negative-phase spread
+gate removed those errors but retained only 2 of 234 later Google rows and zero
+of 689 later controls. Half-scale support therefore remains explicitly absent.
+
+An independent reproduction of the public `aloshdenny/reverse-SynthID` V4
+cross-color codebook did not provide another expert. Its best-of-two-model phase
+rule retained 141 of 355 positives but accepted 191 of 499 controls and 386 of
+a fresh 1,000-control reserve; AUC was 0.517. The repository's stricter
+aspect-ratio routing reduced coverage but preserved the same approximately 38%
+positive and control acceptance within supported rows. Its older V3 phase score
+had AUC 0.473, and two prespecified amplitude-aware V4 rerankings reached only
+0.521 and 0.524 AUC. These external rules are research baselines only. Their useful
+contribution is the solid-reference phase-consensus construction, not either
+published single-image threshold. Full methodology and the DALL-E reference-set
+confound are recorded in the detector research plan.
+A later exact repeat on the hash-disjoint v7 challenge confirmed the same
+failure: the published cut accepted 77/200 Google and 76/200 OpenAI, so it did
+not separate the two target providers.
+A direct exact-1024 reproduction of the same V4 artifact confirmed rather than
+rescued that verdict: the union of its two published profiles accepted 177 of
+443 Google rows and 60 of 162 controls. The artifact's floor left only about two
+active bins in the inspected profile/channel, explaining why its score acts
+as a weak generic phase-coherence test rather than a specific codebook match.
+
+An exact-1086x1448 OpenAI follow-up also rejected the solid-reference transfer.
+A low-texture 256-bin phase codebook achieved native and JPEG-95 test AUCs of
+0.512, and independent train halves shared only two exact bins. The paper's
+content-dependent alternative was tested with 60 OKLab masking-alignment
+features. Its native/JPEG minimum reached test AUC 0.593 and 15/562 positives
+versus 1/228 controls at the frozen boundary, but deterministic half-fits shared
+no positive decision and had coefficient cosine 0.148. Neither branch is a
+runtime OpenAI expert.
+
+An exact-1254 assertion-contrast search selected an sRGB period-8 Blue-channel
+direction at 45 of 259 validation asserted rows and zero of 16 same- or
+other-provider validation rows. It failed its locked specificity check at 39 of
+233 asserted rows and one of 18 controls. Across the complete exact-geometry
+audit it accepted 185 of 992 asserted rows, one of 55 same-provider rows without
+an assertion, and one of 13 other-provider rows. Raising the threshold above
+the wider controls reduced recall to a small minority, so this branch remains
+research-only.
+
+Three attempted veto or missing-codeword rescues also failed. The official
+InvisMark decoder checkpoint passed its own embedded-watermark self-test at
+0.997 confidence and 0.97 bit accuracy, but all OpenAI and provider-control
+cohorts clustered around 0.18 confidence with no useful separation. DTCWT
+modulus before periodic folding retained 5 of 158 locked-test OpenAI rows and
+zero of 135 controls, then zero of 40 fresh OpenAI rows. A 16-codeword whitened
+period-8 model retained 5 of 158 and zero controls, then 1 of 40 fresh OpenAI
+rows and 1 of 50 fresh controls. They neither explain the known oracle-positive
+miss nor justify runtime routing.
+
+An image-level patch-bag model over nine normalized high-pass patches was the
+strongest later local OpenAI classifier. It accepted 324/1,364 development-test
+OpenAI rows with 4/3,373 heterogeneous controls, then transferred to 120/486
+OpenAI rows, 8/504 general controls, and 5/33 same-provider non-assertion rows
+in the later temporal challenge. Assertion enrichment over the same-provider
+stratum was not independently significant (`p = 0.151`, one-sided exact test).
+JPEG-95 reduced the unchanged conjunction to
+1/486 positives and zero controls. The native temporal hits were complementary
+to the signed period-8 hits, but the same-provider rate and codec collapse
+identify another export noiseprint rather than a runtime SynthID expert.
+
+The separate OpenAI period-8 DTCWT component is persistent rather than tied to
+one short rollout: exact-generator asserted hits were 3/16, 46/365, and 26/200
+from May through July, with 75/581 overall versus 1/52 same-generator rows
+without an assertion. Its native/JPEG minimum score reached 0.721 AUC between
+those indeterminate strata. Sorting all 64 cyclic correlation scores removed
+absolute phase but also removed locked-test discrimination at 0/158 positives
+and 0/135 controls. This remains research evidence for a weak signed carrier,
+not a runtime OpenAI detector.
+
+A four-family open-proxy challenge also failed to justify a generic neural
+watermark expert. A fixed residual frontend and cross-family residual mixing
+were trained on three of TrustMark P, VideoSeal, DWT-DCT, and WAM while the
+fourth encoder and its test sources remained unseen. Held-out AUCs ranged from
+0.437 to 0.562. Equal-power phase-scrambled hard negatives prevented simple
+spectral-energy shortcuts, but did not produce architecture transfer. A
+separate translation-invariant Gemini bicoherence search selected none of 20
+development positives and finished at 0/50 positives, 0/199 controls, and AUC
+0.374. Neither branch is part of runtime routing; full split and oracle details
+are in the detector research plan.
+
+The separately measured registered geometry range remains 250,000 through
+10,000,000 decoded pixels with both sides at least 256 pixels. The default path
+and `identify` use registered-v3, then the narrower opponent-registered-v1
+fallback in its 1-10 megapixel domain, and large-v1 above 10 megapixels. A
+20-image real-corpus drift check was byte-identical after the earlier v2 integration.
+The calibration history and caveats are in the linked detector research plan.
+
+### Official OpenAI SynthID verifier
+
+[`openai_provenance.py`](../src/remove_ai_watermarks/openai_provenance.py)
+provides the explicit remote production backend exposed as
+`verify-openai-synthid`. It is intentionally separate from `identify`, because
+one invocation uploads a sanitized raster to OpenAI. The CLI requires
+`--acknowledge-upload`, and the optional OpenAI SDK lives in the independent
+`verify` extra.
+
+The backend accepts only PNG, JPEG, and WebP. It computes a decoded RGBA pixel
+fingerprint, removes AI provenance metadata into a temporary file through
+`metadata.strip_and_verify`, recomputes the fingerprint, and aborts before any
+request if metadata survived, the format changed, the pixels changed, or the
+sanitized file exceeds the endpoint's 50 MiB limit. It then sends exactly one
+multipart file to `content_provenance_checks.create` and parses exactly one
+`type == "synthid"` result. The independent C2PA entry is never returned or
+used as fallback evidence. Missing, duplicate, or unknown SynthID outcomes are
+errors rather than negative detections.
+
+The default SDK client has a 120-second request timeout and zero automatic
+retries. One upload acknowledgement therefore authorizes at most one media
+transmission rather than inheriting the SDK's retry default. Request logs keep
+the endpoint, temporary basename, media type, byte count, timeout, retry policy,
+duration, HTTP status, error code, and request id when available, but omit the
+source path, image bytes, credentials, and decoded-pixel fingerprint.
+
+`OpenAIProvenanceError` preserves the status, API error code, request id,
+`Retry-After` value, and a transient-only `retryable` flag. The library does not
+automatically act on that flag: an explicit caller invocation is required for
+every additional upload. Transport and schema failures remain errors rather
+than becoming `not_detected` or a local detector result.
+
+The result remains provider-scoped and positive-evidence-only. `not_detected`
+does not mean human-created, and the official endpoint's published prohibition
+on repeated reverse-engineering or evasion queries prevents using this backend
+as an adaptive training or removal oracle.
 
 ### Portable metadata record
 
@@ -576,6 +969,22 @@ It is a separate `forensic_metadata` record type and is deliberately rejected by
 provenance normalizer. Integration code publishes the strict
 `ProvenanceReport.to_dict()` alongside it rather than letting operational fields or
 derived results influence detection.
+
+### Photo pixel classifier
+
+[`classify.py`](../src/remove_ai_watermarks/classify.py) is the 2026-08-31
+photo freeze: CLIP-L-ft ridge AND freeze MLP, then 124-d focal heads only on
+DEFINITELY. The public label is `ai` / `human` / `unknown`. POSSIBLY is
+`unknown`. The named class is `openai` / `google` / `muse-image` / `tc260` /
+`None`. `tc260` is the China AIGC label standard, not one producer. The freeze
+file keys the Muse Image head `meta_muse_image`. Tests in
+`tests/test_classify.py` pin the gate without downloads and pin that
+`identify` does not import this module.
+
+Weights stay out of git. The Hub snapshot is `wiltodelta/raiw-photo-classify`.
+`RAIW_CLASSIFY_WEIGHTS` overrides it. The extra is `classify`. User guide:
+[photo-classify.md](photo-classify.md). Hub card:
+[photo-classify-hf/README.md](photo-classify-hf/README.md).
 
 ### Pixel forensics
 
@@ -765,6 +1174,31 @@ absent or unmapped producer still falls back to the ByteDance pair.
 
 `remove_auto_marks` removes every selected mark, not only the strongest one.
 This matters for images that carry marks in more than one corner.
+
+The automatic path has four stages: perception, decision, action, then read-only
+validation. The first action reuses the exact detection produced by perception,
+so the common one-mark path pays for one pre-fill and one post-fill detector pass
+rather than two pre-fill passes plus validation. Later co-firing marks retain the
+historical re-detection on the progressively edited image instead of acting on
+stale geometry.
+
+After one fill, the same detector runs at the same resolved trust level. A
+post-fill detection counts as a residual only if its region overlaps the actual
+mask bounding box. The per-mark status is `cleaned`, `partial`, or `unvalidated`;
+the aggregate also has `no_watermark`. Validation never expands the mask or
+retries the fill. Because it uses the same detector, this is a consistency check,
+not an independent oracle of visual quality.
+
+Runtime was measured on 2026-09-03 with 12 tracked public visible fixtures, five
+warmed repetitions each, explicit `cv2`, alternating old/new order, and no
+concurrent benchmark load. Across 60 paired runs, the old path's median was
+373.9 ms and the validated path's median was 379.2 ms; the median paired delta
+was -0.9% (interquartile range -3.6% to +1.5%) and the aggregate delta was
+-1.5%. All output pixels and removed-label lists matched the old path. These
+figures show no measurable regression on that corpus, not a cross-machine
+latency guarantee. A separate exact snapshot check kept every strict/relaxed
+verdict, confidence, and region unchanged for all 12 detectors on all 12
+fixtures.
 
 Regression coverage:
 
@@ -958,9 +1392,10 @@ is the source of truth for:
 The current profiles are `qwen-zimage` (the default), `sdxl-zimage`,
 `chroma-zimage`, and `auto`, and all four are CUDA-only. `controlnet`, `sdxl`,
 `qwen` and `default` were removed rather than kept as a CPU path, and are
-rejected rather than aliased onward. `auto` is a per-cohort engine router:
+rejected rather than aliased onward. `auto` is a deterministic per-cohort
+selection policy:
 chroma-zimage for OpenAI and Microsoft, qwen-zimage for Google, Meta, and
-unknown. It is not a content-class split inside one engine.
+unknown. It does not run a learned router or classify the image's genre.
 
 `qwen-zimage` normally resolves global denoise from image area for unknown content.
 Measured provider cohorts bypass that curve with flat operating points. The values,
@@ -1118,13 +1553,14 @@ geometry alone in schema 2, plus a SHA-256 over decoded RGB width, height, and p
 Validation happens before model loading. The library never treats OCR confidence as
 verification, and geometry-only operators do not need to invent text or script fields.
 
-When enabled, `QwenZImagePipeline` reconstructs the source once through its already
-loaded Qwen VAE, runs the ordinary global and face stages, and calls the shared
-restoration compositor. The optional fidelity anchor first blends 15% of the VAE
+When enabled, the one profile selected before model loading reconstructs the source
+once through its already loaded VAE, runs the ordinary global and face stages, and
+calls the shared restoration compositor. Qwen and Chroma implement this donor hook;
+SDXL does not. The optional Qwen-only fidelity anchor first blends 15% of the VAE
 reconstruction into the clean result; it is off by default because the blend returned
 detector-visible OpenAI SynthID in the measured poster fixtures. The compositor derives
 binary source and candidate silhouettes, groups nearby lines, uses LaMa for the initial
-and residual-glyph erase passes, paints fresh silhouette edges, then copies the Qwen-VAE
+and residual-glyph erase passes, paints fresh silhouette edges, then copies the profile-VAE
 core with a 0.5-pixel feather. The evaluation script
 imports these same mask and compositing helpers so the two implementations cannot
 silently drift. Silhouette crops start 12% of line height beyond each horizontal
@@ -1139,6 +1575,21 @@ resolution caps, humanize, unsharp, and adaptive polish. Those combinations chan
 geometry or final pixels after the verified layer and have no measured oracle result.
 It remains opt-in because annotations are manual and provider verdicts apply only to
 the exact tested output hashes, not to the mechanism in general.
+
+The first full-path H100 check on 2026-08-31 ran each generative engine exactly
+once per source and used that SAME engine's VAE donor; it did not compose Qwen and
+Chroma in one production result. On the two verified multilingual OpenAI posters,
+restoration reduced PaddleOCR CER from 0.303 to 0.160 and 0.279 to 0.136 for Qwen,
+and from 0.213 to 0.130 and 0.204 to 0.108 for Chroma. PSNR improved on all four
+arms (Qwen 26.1 to 29.9 dB and 27.7 to 31.6 dB; Chroma 29.6 to 33.1 dB and 29.7
+to 32.9 dB). The verified CJK Google fixture is the counterexample that prevents
+an unconditional quality claim: Qwen CER stayed 0.074, while Chroma moved from
+0.037 to 0.074 despite better LPIPS, SSIM, PSNR, and text-box pixel error. The
+stage is therefore implemented and fidelity-positive on both OpenAI sources, but
+not assumed to improve every OCR reading. This is a fidelity check, not a provider
+oracle certification; exact output hashes and per-box metrics are produced by
+`scripts/chroma_text_restoration_study.py` under the gitignored
+`out/text-restoration-engine-study/` directory.
 
 A matched stage-isolation check on the 18-face Gemini portrait grid confirms the
 division of responsibility. The visible-cleaned, metadata-stripped control and the
@@ -1178,6 +1629,18 @@ strength-controlled img2img in that family; the full research record,
 including why FLUX.2 itself is not integrable this way, is
 [`chroma1-engine-research.md`](chroma1-engine-research.md).
 
+The profile also implements the shared verified-text donor hook through its already
+loaded Chroma VAE. It edge-pads native geometry to the /16 latent grid, takes the
+deterministic mode of the encoder distribution rather than sampling it, decodes with
+Diffusers' own image processor, and crops back to the exact source dimensions. Thus
+`auto` still loads and runs only the profile selected by the measured vendor table;
+the presence of a manifest does not introduce a second generative model or override
+that decision. A CPU smoke run against the official Chroma1-HD `AutoencoderKL`
+weights on 2026-08-31 verified the real encode/decode contract and exact restoration
+of a non-grid-aligned source size; model-free tests pin mode-not-sample and padding.
+Chroma-specific full-pipeline provider-oracle certification remains an output-hash
+measurement, not something either check can establish.
+
 The profile swaps only the global stage (same inheritance invariant as
 sdxl-zimage, asserted by the same test shape). Three things are bound to the
 calibration and must not drift: the NEUTRAL prompt (`high quality, sharp,
@@ -1208,6 +1671,24 @@ first-clean is still 0.10; botanical seeds 1 and 2 stay DETECTED at
 that rung, which is the margin the 0.17 floor already holds. OpenAI stays on the flat 0.09 floor: extra SynthID-positive carriers
 clear at or below 0.06, including a 2-face file, and only the 9-face
 grid needs 0.075 (seed-stable on 0, 1, 2 via openai.com/research/verify).
+
+A separate content-balanced check on 2026-08-31 tested the exact production
+OpenAI and Meta floors over 19 prompt-matched image strata per provider. Each
+engine ran in its own sequential H100 invocation, and the comparison isolated
+the global stage because the shared face repair does not change with this choice.
+On OpenAI content, Chroma won SSIM and PSNR on 19/19 pairs, MAE on 18/19, edge
+F1 on 15/19, and LPIPS on 12/19. On Meta content, Qwen won LPIPS and edge F1 on
+18/19 pairs; Chroma's better PSNR on 16/19 did not overcome its systematically
+worse perceptual and edge preservation at the higher required floor. Exact
+two-sided sign-test p-values were 3.8e-6 for the OpenAI SSIM and PSNR directions
+and 7.6e-5 for the Meta LPIPS and edge-F1 directions. The tracked discovery
+inputs and manifests are in
+[`data/evaluations/engine-selection/`](../data/evaluations/engine-selection/),
+the run is reproduced by `scripts/engine_selection_study.py`, and paired analysis
+by `scripts/analyze_engine_selection_study.py`. These content files were locally
+re-encoded and are not watermark oracles; they validate fidelity at already
+oracle-calibrated floors, not removal by themselves. No content-stratum override
+is supported by this pass, so `auto` keeps the measured provenance-cohort table.
 
 ### SDXL plus Z-Image
 
@@ -1393,7 +1874,8 @@ grain, unsharp masking, and adaptive polish helpers.
 
 `upscaler.py` held an optional Real-ESRGAN path, reachable only when enlarging a
 small image to the minimum-resolution floor. That floor existed to lift small
-inputs toward SDXL's ~1024 training size; when the SDXL profiles were removed it
+inputs toward SDXL's ~1024 training size; when the standalone SDXL and ControlNet
+profiles were removed (`sdxl-zimage` is a later, surviving profile) it
 was forced to 0 on every path, so the module, the `--min-resolution` and
 `--upscaler` options and the `esrgan` extra were all unreachable and went with
 it. Only the `max_resolution` cap can move geometry now, and it only scales down.

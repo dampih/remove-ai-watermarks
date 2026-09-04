@@ -36,6 +36,7 @@ from remove_ai_watermarks._internal.two_stage_pipeline import (
     _load_prompt_payload,
     _prompt_cache_path,
     _store_prompt_payload,
+    edge_pad_to_grid,
 )
 
 log = logging.getLogger(__name__)
@@ -189,3 +190,31 @@ class ChromaZImagePipeline(TwoStageZImagePipeline):
         if result.size != image.size:
             result = result.resize(image.size, Image.Resampling.LANCZOS)
         return result.convert("RGB")
+
+    def _vae_roundtrip(self, image: Image.Image) -> Image.Image:
+        """Reconstruct source pixels through the already loaded Chroma VAE."""
+        import torch
+
+        pipe = self._load_global()
+        source_width, source_height = image.size
+        padded = edge_pad_to_grid(image, _LATENT_GRID)
+
+        tensor = pipe.image_processor.preprocess(
+            padded,
+            height=padded.height,
+            width=padded.width,
+        ).to(device=self.device, dtype=self.torch_dtype)
+        with torch.inference_mode():
+            encoded = pipe.vae.encode(tensor)
+            if hasattr(encoded, "latent_dist"):
+                # A restoration donor must be deterministic. Diffusers samples this
+                # distribution for img2img noise initialization; its mode is the
+                # faithful VAE reconstruction needed here.
+                latents = encoded.latent_dist.mode()
+            elif hasattr(encoded, "latents"):
+                latents = encoded.latents
+            else:
+                raise AttributeError("Chroma VAE encoder output contains no latents")
+            decoded = pipe.vae.decode(latents, return_dict=False)[0]
+        reconstructed = pipe.image_processor.postprocess(decoded, output_type="pil")[0]
+        return reconstructed.crop((0, 0, source_width, source_height)).convert("RGB")

@@ -20,13 +20,16 @@ from remove_ai_watermarks._internal.constants import (
     C2PA_CHUNK_TYPE,
     C2PA_ISSUERS,
     C2PA_SIGNATURES,
+    C2PA_SOFT_BINDING_REGISTRY,
     C2PA_SOFT_BINDINGS,
     PNG_SIGNATURE,
+    C2paSoftBindingAlgorithm,
 )
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from typing import BinaryIO
 
 _C2paReader: Any = None
@@ -536,12 +539,18 @@ def _structured_manifest_fields(store: dict[str, Any]) -> dict[str, Any]:
     has_watermark_action = any(action.startswith("watermarked") for action in actions)
     if has_watermark_action:
         info["watermarked"] = True
-    if info.get("ai_source_kind") and not soft_binding_algorithms:
+    soft_binding_algorithms = list(dict.fromkeys(soft_binding_algorithms))
+    algorithms = "\n".join(soft_binding_algorithms).encode()
+    soft_binding_entries = soft_binding_registry_entries_in(algorithms)
+    soft_binding_blocks_synthid = any(entry.kind == "watermark" for entry in soft_binding_entries) or len(
+        soft_binding_entries
+    ) < len(soft_binding_algorithms)
+    if info.get("ai_source_kind") and not soft_binding_blocks_synthid:
         # Evidence scope: only the signer/generator identity strings above, never
         # the whole chain - a vendor named inside another vendor's manifest (the
         # Designer case) must not turn into that vendor's SynthID provenance. A
-        # manifest that names its own forensic soft-binding algorithm carries
-        # that vendor's mark and is excluded from the generic inference entirely.
+        # registered fingerprint does not suppress an independently established
+        # SynthID watermark; a watermark or unknown algorithm does.
         identity_bytes = json.dumps(identity_strings, ensure_ascii=False).encode()
         synthid = synthid_evidence_vendors_in(identity_bytes, has_watermark_action=has_watermark_action)
         if synthid:
@@ -549,9 +558,7 @@ def _structured_manifest_fields(store: dict[str, Any]) -> dict[str, Any]:
             info["synthid_watermark"] = synthid_verdict(", ".join(synthid))
 
     if soft_binding_algorithms:
-        soft_binding_algorithms = list(dict.fromkeys(soft_binding_algorithms))
-        algorithms = "\n".join(soft_binding_algorithms).encode()
-        soft_bindings = soft_binding_vendors_in(algorithms)
+        soft_bindings = soft_binding_labels(soft_binding_entries)
         if soft_bindings:
             info["soft_binding_vendors"] = soft_bindings
             info["soft_binding"] = ", ".join(soft_bindings)
@@ -564,10 +571,6 @@ def _structured_manifest_fields(store: dict[str, Any]) -> dict[str, Any]:
 def synthid_verdict(vendors: str) -> str:
     """Describe why supported provenance establishes a SynthID watermark."""
     return f"present according to {vendors} provenance"
-
-
-def _names_present(buffer: bytes, registry: dict[bytes, str]) -> list[str]:
-    return sorted({label for token, label in registry.items() if token in buffer})
 
 
 def synthid_evidence_vendors_in(buffer: bytes, *, has_watermark_action: bool | None = None) -> list[str]:
@@ -594,7 +597,26 @@ def synthid_evidence_vendors_in(buffer: bytes, *, has_watermark_action: bool | N
 
 def soft_binding_vendors_in(buffer: bytes) -> list[str]:
     """List the soft-binding algorithms named in manifest bytes."""
-    return _names_present(buffer, C2PA_SOFT_BINDINGS)
+    return soft_binding_labels(soft_binding_registry_entries_in(buffer))
+
+
+def soft_binding_registry_entries_in(buffer: bytes) -> tuple[C2paSoftBindingAlgorithm, ...]:
+    """Return exact registered soft-binding entries named in manifest bytes."""
+    return tuple(
+        entry
+        for entry in C2PA_SOFT_BINDING_REGISTRY
+        if re.search(
+            rb"(?<![A-Za-z0-9.-])" + re.escape(entry.algorithm.encode()) + rb"(?![A-Za-z0-9.-])",
+            buffer,
+        )
+    )
+
+
+def soft_binding_labels(entries: Iterable[C2paSoftBindingAlgorithm], *, kind: str | None = None) -> list[str]:
+    """Return stable display labels for matching registry entries."""
+    return sorted(
+        {C2PA_SOFT_BINDINGS[entry.algorithm.encode()] for entry in entries if kind is None or entry.kind == kind}
+    )
 
 
 def _ordered_matches(buffer: bytes, registry: dict[bytes, str]) -> list[str]:
@@ -624,10 +646,11 @@ def _populate_registry_fields(buffer: bytes, info: dict[str, Any]) -> bool:
 
     if b"c2pa.watermarked" in buffer:
         info["watermarked"] = True
-    soft_bindings = soft_binding_vendors_in(buffer)
+    soft_binding_entries = soft_binding_registry_entries_in(buffer)
+    soft_bindings = soft_binding_labels(soft_binding_entries)
     synthid = (
         []
-        if soft_bindings
+        if any(entry.kind == "watermark" for entry in soft_binding_entries)
         else synthid_evidence_vendors_in(buffer, has_watermark_action=info.get("watermarked", False))
     )
     if ai_source and synthid:

@@ -14,6 +14,8 @@ defaults. This page focuses on choosing the right command.
 | Command or signal | Required installation |
 | --- | --- |
 | `metadata` and metadata-only `identify` | Default package |
+| `classify` | `remove-ai-watermarks[classify]` |
+| `verify-openai-synthid` | `remove-ai-watermarks[verify]`, API access, and `OPENAI_API_KEY` |
 | Visible signals in `identify` | `remove-ai-watermarks[visible]` (`pixels` is the minimal runtime) |
 | Open DWT-DCT signals in `identify` | `remove-ai-watermarks[detect]` |
 | Adobe TrustMark signals in `identify` on Python 3.11-3.12 | `remove-ai-watermarks[trustmark]` |
@@ -47,8 +49,10 @@ unanchored or expired signer is reported as a caveat rather than a lower score,
 because no trust anchor list ships with the reader. A failed asset binding or
 signature, or a revoked signing credential, does not confirm the claimed origin. When a structured
 C2PA soft binding is present, the report also names its exact algorithm and
-signed value; removing the manifest does not remove the referenced pixel
-watermark or content fingerprint.
+signed value. Removing the manifest does not remove a referenced pixel
+watermark, and a referenced content fingerprint may still be recomputed. A
+fingerprint is reported as a durable-provenance signal, not as a watermark or a
+pixel-removal target.
 
 Machine readable output:
 
@@ -62,8 +66,76 @@ Metadata only inspection:
 remove-ai-watermarks identify image.png --no-visible
 ```
 
-Despite the historical option name, `--no-visible` skips both visible and open
-invisible pixel detectors. Metadata inspection still runs.
+Despite the historical option name, `--no-visible` skips all pixel detectors,
+including visible marks, open DWT-DCT, and TrustMark. Metadata inspection still
+runs.
+
+## Verify OpenAI SynthID from pixels
+
+```bash
+uv tool install --force "remove-ai-watermarks[verify]"
+remove-ai-watermarks verify-openai-synthid image.png --acknowledge-upload
+remove-ai-watermarks verify-openai-synthid image.png --acknowledge-upload --json
+```
+
+This is an explicit remote check against OpenAI's official Content Provenance
+API, not the incomplete local OpenAI carrier research model. Before upload, the
+command writes a temporary copy with AI provenance metadata removed and aborts
+unless the decoded RGBA pixels are identical to the source. It then reads only
+the API's independent `synthid` entry; a C2PA-only response cannot become a
+SynthID detection. The source is never modified.
+
+The API supports PNG, JPEG, and WebP files up to 50 MiB. The command requires
+`OPENAI_API_KEY` and an organization with endpoint access. Because the sanitized
+raster is uploaded to OpenAI and the endpoint is not eligible for Zero Data
+Retention, `--acknowledge-upload` is mandatory. This command is never called by
+`identify`. `not_detected` means only that OpenAI's verifier did not recognize a
+supported watermark in this file; it is not proof of human authorship.
+
+The built-in client bounds the request at 120 seconds and disables automatic
+SDK retries, so one acknowledgement cannot silently upload the media multiple
+times. A timeout, disconnect, malformed response, access failure, or rate limit
+is an error, never a negative watermark verdict. API failures expose status,
+error code, request id, `Retry-After`, and whether an explicit caller-controlled
+retry is appropriate through `OpenAIProvenanceError`; the verifier itself never
+retries an upload.
+The JSON result uses the same provider-scope, backend, pixel-preservation, and
+metadata-use audit fields as `verify_openai_synthid`.
+
+The Python API enforces the same boundary with the required explicit intent
+flag `verify_openai_synthid(path, acknowledge_upload=True)`.
+
+## Classify a photograph from pixels
+
+This is not provenance. `identify` never starts it, including after a
+no-signal metadata scan. Install the extra first:
+
+```bash
+uv tool install --force "remove-ai-watermarks[classify]"
+```
+
+Then:
+
+```bash
+remove-ai-watermarks classify image.png
+remove-ai-watermarks classify image.png --json
+```
+
+The command runs the frozen photo detector (CLIP-L-ft ridge AND freeze MLP).
+Only a DEFINITELY result is reported as `ai`. On that result only, the 124-d
+provider head may return `openai`, `google`, `muse-image`, or `tc260`. POSSIBLY is
+`unknown`. Camera-like photographs are `human`. The call does not run cleanup
+and does not set `is_ai_generated`.
+
+The contract is AI versus camera. Receipts, UI, and digital art are out of
+scope. Microsoft is not a pixel class: a DALL-E Bing image scores as `openai`,
+an Imagen Designer image as `google`. `tc260` is the China AIGC label
+standard, not one producer. Weights download on first use from
+[`wiltodelta/raiw-photo-classify`](https://huggingface.co/wiltodelta/raiw-photo-classify),
+or from `RAIW_CLASSIFY_WEIGHTS` if that directory already holds the freeze
+files.
+Guide: [photo pixel classification](photo-classify.md). Hub card:
+[photo-classify-hf/README.md](photo-classify-hf/README.md).
 
 ## Remove known visible marks
 
@@ -79,7 +151,14 @@ The default behavior:
 - removes every detected match, except the weakly detected Jimeng label pill,
   which needs corroboration (see [supported signals](supported-signals.md));
 - selects the best installed fill backend;
+- checks the filled region once without changing it or retrying the fill;
 - strips AI metadata from the output.
+
+The automatic command reports `Removed and validated` when the detector no
+longer accepts an overlapping mark, `Partial` when an overlapping residual is
+still detected, and `Post-removal validation unavailable` when the check fails.
+The latter two still write the once-filled output and return success; they are
+result-quality statuses, not requests for an automatic second edit.
 
 Use a specific mark:
 
@@ -104,6 +183,18 @@ Use the strict visual gate without metadata or sibling corroboration:
 ```bash
 remove-ai-watermarks visible image.png --sensitivity strict -o clean.png
 ```
+
+Act on a mark you can see but the detector will not confirm, by naming it and
+skipping the gate:
+
+```bash
+remove-ai-watermarks visible image.png --mark gemini --no-detect -o clean.png
+```
+
+`--detect` is the default. `--no-detect` removes the named mark's footprint
+unconditionally, so it only makes sense together with an explicit `--mark`; on
+an image that never carried that mark it inpaints a region for nothing. Prefer
+`erase --region` when you know the geometry.
 
 When no known mark is detected, the command does not write a new output. Use
 `erase` if you can identify the affected region yourself.
@@ -436,17 +527,18 @@ user can act on rather than after a model load.
 ### Restore operator-verified text
 
 `--text-manifest` enables the experimental `vae-glyphs` post-pass. It reconstructs
-the source with the Qwen VAE, erases the annotated candidate glyphs with LaMa, and
-composites only the reconstructed glyph cores through source-derived silhouettes. It
-does not run OCR or choose which strings are correct. The optional `--fidelity-anchor`
-described below additionally blends 15% of the reconstruction across the full frame.
+the source with the selected profile's VAE, erases the annotated candidate glyphs
+with LaMa, and composites only the reconstructed glyph cores through source-derived
+silhouettes. It does not run OCR or choose which strings are correct. The optional
+Qwen-only `--fidelity-anchor` described below additionally blends 15% of the
+reconstruction across the full frame.
 
 Install the combined extra and run only with an operator-verified manifest:
 
 ```bash
 uv tool install --force "remove-ai-watermarks[text-restoration]"
 remove-ai-watermarks invisible image.png -o clean.png \
-  --pipeline qwen-zimage --text-manifest verified-lines.json --force
+  --pipeline auto --text-manifest verified-lines.json --force
 ```
 
 ``verified: true`` may also be set by an automated operator that attests
@@ -454,7 +546,8 @@ machine-verified geometry: stability-gated detector boxes inside sane caps. Such
 operators should use the geometry-only schema 2, which carries no transcription
 or script metadata.
 
-Since 0.27.1 the global 15% Qwen-VAE fidelity-anchor blend is off by default: it
+Since 0.27.1 the global 15% Qwen-VAE fidelity-anchor blend is off by default and
+remains available only with `qwen-zimage`: it
 was measured to return detector-visible OpenAI SynthID on poster-scale manifests
 (official Content Provenance API, 2026-08-19). `--fidelity-anchor` restores the
 0.27.0 research behavior; text-box fidelity lost by the default is well under one
@@ -471,8 +564,9 @@ container changes remain valid while a resized or edited source fails closed. Th
 experimental helper
 `remove_ai_watermarks._internal.text_restoration.source_pixel_sha256` computes it.
 
-This mode is supported only by `qwen-zimage` at native geometry with
-`humanize=0`, `unsharp=0`, and adaptive polish disabled. `all` also accepts the flag,
+This mode is supported by `qwen-zimage`, `chroma-zimage`, and `auto` at native
+geometry with `humanize=0`, `unsharp=0`, and adaptive polish disabled. The legacy
+`sdxl-zimage` profile does not expose a verified-text VAE donor. `all` also accepts the flag,
 but its manifest must match the pixels entering the invisible stage; if visible-mark
 removal changes those pixels, the hash check rejects the run. One oracle verdict does
 not certify another manifest, seed, model/runtime version, or output hash.
@@ -502,7 +596,33 @@ remove-ai-watermarks invisible image.png -o clean.png \
 ```
 
 Tiling avoids the explicit downscale but each tile is regenerated separately.
-It is a memory strategy, not a guarantee of better quality.
+It is a memory strategy, not a guarantee of better quality. `--tile-size` and
+`--tile-overlap` set the tile geometry (defaults 1024 and 128 px); a larger
+overlap costs time and hides seams.
+
+### Every tuning option
+
+These apply to `invisible`, `all`, and `batch`. Each has a measured default, so
+reach for one only when you know why the default is wrong for your file.
+
+| Option | Effect |
+| --- | --- |
+| `--strength` | Denoising strength, 0.0-1.0. Default is profile- and vendor-adaptive; see [choose a strength cohort](#choose-a-strength-cohort). Raising it removes more and drifts further from the original. |
+| `--vendor` | Strength cohort, and an assertion that the watermark is present. |
+| `--pipeline` | Profile: `qwen-zimage` (default), `sdxl-zimage`, `chroma-zimage`, `auto`. |
+| `--seed` | Fixed at 0 by default: every profile is certified at that seed, and removal near the floor is seed-dependent. |
+| `--controlnet-scale` | Canny ControlNet conditioning on the global stage. Higher keeps the original structure and text closer. |
+| `--humanize` | Analog film grain, 0 = off, typical 2.0-6.0. |
+| `--unsharp` | Unsharp-mask sharpening, 0 = off. |
+| `--adaptive-polish` / `--no-adaptive-polish` | Overrides the profile's own choice. Unset lets the profile decide: off for `qwen-zimage`, whose output already matches the input's detail level, on for `sdxl-zimage`. |
+| `--max-resolution` | Cap the long side before diffusion; 0 = native. |
+| `--tile`, `--tile-size`, `--tile-overlap` | Tiled regeneration for large inputs, as above. |
+| `--cpu-offload` | Stream model components between CPU and GPU to lower CUDA memory pressure, at the cost of speed. |
+| `--hf-token` | Hugging Face token for the model download; also read from the environment and a local `.env`. |
+
+There is no `--model`, `--steps`, `--guidance-scale` or `--device` option; the
+profile pins all four. See [exit behavior](#exit-behavior) for what each command
+returns.
 
 ## Run the full pipeline
 

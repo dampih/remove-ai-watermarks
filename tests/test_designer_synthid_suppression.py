@@ -1,4 +1,4 @@
-"""Regression: a manifest that names its own forensic soft binding must not
+"""Regression: a manifest that names its own watermark soft binding must not
 also report a SynthID watermark from the generic vendor-token inference.
 
 Microsoft Designer manifests sign as Microsoft, carry the InvisMark
@@ -45,12 +45,45 @@ DESIGNER_STORE = {
 }
 
 
-def test_named_soft_binding_suppresses_generic_synthid_evidence() -> None:
+def test_named_watermark_soft_binding_suppresses_generic_synthid_evidence() -> None:
     info = c2pa_info_from_manifest_store(DESIGNER_STORE)
     assert info["ai_source_kind"] == "generated"
     assert info["soft_binding_algorithm"] == "com.microsoft.invismark.1"
     assert info.get("synthid_watermark") is None
     assert info.get("synthid_vendors") is None
+
+
+def test_content_fingerprint_does_not_suppress_google_synthid_evidence() -> None:
+    store = {
+        "active_manifest": "google",
+        "manifests": {
+            "google": {
+                "signature_info": {"issuer": "Google LLC"},
+                "assertions": [
+                    {
+                        "label": "c2pa.actions",
+                        "data": {
+                            "actions": [
+                                {
+                                    "action": "c2pa.created",
+                                    "digitalSourceType": (
+                                        "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+                                    ),
+                                }
+                            ]
+                        },
+                    },
+                    {"label": "c2pa.soft-binding", "data": {"alg": "io.iscc.v0"}},
+                ],
+            }
+        },
+    }
+
+    info = c2pa_info_from_manifest_store(store)
+
+    assert info["soft_binding"] == "ISCC (content code)"
+    assert info["synthid_vendors"] == ["Google LLC"]
+    assert info["synthid_watermark"] == "present according to Google LLC provenance"
 
 
 def test_vendor_agent_name_alone_is_not_the_vendors_provenance() -> None:

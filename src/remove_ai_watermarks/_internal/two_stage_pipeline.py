@@ -78,6 +78,23 @@ _FACE_PROMPT = ""
 _FACE_NEGATIVE = "blurry, ugly, bad quality,"
 
 
+def edge_pad_to_grid(image: Image.Image, grid: int) -> Image.Image:
+    """Pad RGB pixels at the lower/right edges to a latent-grid multiple."""
+    width, height = image.size
+    pad_width = (-width) % grid
+    pad_height = (-height) % grid
+    rgb = image.convert("RGB")
+    if not (pad_width or pad_height):
+        return rgb
+    return Image.fromarray(
+        np.pad(
+            np.asarray(rgb),
+            ((0, pad_height), (0, pad_width), (0, 0)),
+            mode="edge",
+        )
+    )
+
+
 def resolve_face_model_residency(
     requested: bool | None,
     *,

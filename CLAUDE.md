@@ -31,6 +31,8 @@ Optional features and installation groups are documented in [`docs/installation.
 
 `maintain.sh` runs dependency freshness and security checks, Ruff, Pyright scoped to `src/`, and the parallel test suite. Full-project Pyright is not the project gate because the ML dependency graph can exhaust Node memory.
 
+This gate does NOT pass `--ignore-unfixed` to uv-secure, so a transitive CVE with no released fix stops it before Ruff, Pyright and the tests ever run. That is deliberate and it is not a blocker: run those three separately and report them, per the triage in [`docs/development.md`](docs/development.md). A red gate here is not the same signal as a red gate in a sibling repository that does ignore unfixed findings.
+
 Command, gate, typing, and model-test invariants auto-load from [`.claude/rules/development.md`](.claude/rules/development.md). Environment recovery, CI behavior, and fixture policy live in [`docs/development.md`](docs/development.md).
 
 Before a release, read [`docs/release-and-distribution.md`](docs/release-and-distribution.md). Treat the release as complete only after PyPI, Homebrew, the Hugging Face Space, and the ComfyUI Registry are verified; conda is not published. Keep the source-distribution public allowlist.
@@ -39,7 +41,7 @@ Before a release, read [`docs/release-and-distribution.md`](docs/release-and-dis
 
 [`docs/module-internals.md`](docs/module-internals.md) is the canonical per-module map, including design decisions, thresholds, calibration history, incident records, and regression guards. Read the relevant section before changing a subsystem.
 
-Research and current constraints are routed through [`docs/index.md`](docs/index.md), especially [`docs/known-limitations.md`](docs/known-limitations.md), [`docs/supported-signals.md`](docs/supported-signals.md), [`docs/synthid.md`](docs/synthid.md), and [`docs/watermarking-landscape.md`](docs/watermarking-landscape.md). Classifier research is split between general [`AI-generated image classifiers`](docs/ai-generated-image-classifiers.md) and [`SynthID source classifiers`](docs/synthid-classifiers.md). Other SynthID campaign logs are [`docs/synthid-detector-research.md`](docs/synthid-detector-research.md) and [`docs/synthid-removal-research.md`](docs/synthid-removal-research.md).
+Research and current constraints are routed through [`docs/index.md`](docs/index.md), especially [`docs/known-limitations.md`](docs/known-limitations.md), [`docs/supported-signals.md`](docs/supported-signals.md), [`docs/synthid.md`](docs/synthid.md), and [`docs/watermarking-landscape.md`](docs/watermarking-landscape.md). Pixel photo classification is [`docs/photo-classify.md`](docs/photo-classify.md); it is not `identify`. Classifier research is split between general [`AI-generated image classifiers`](docs/ai-generated-image-classifiers.md) and [`SynthID source classifiers`](docs/synthid-classifiers.md). Other SynthID campaign logs are [`docs/synthid-detector-research.md`](docs/synthid-detector-research.md) and [`docs/synthid-removal-research.md`](docs/synthid-removal-research.md). The pre-split chronological archive is [`docs/synthid-detector-removal-plan.md`](docs/synthid-detector-removal-plan.md).
 
 ## Data safety
 
@@ -51,4 +53,4 @@ Topic-specific rules live in `.claude/rules/*.md` and are auto-loaded when match
 
 | File | Covers |
 |---|---|
-| `development.md` | Command contracts, project gate, typing boundaries, model-adjacent tests, and the detection-path measurement rule |
+| `development.md` | Command contracts, project gate, typing boundaries, model-adjacent tests, the docs-coverage seam, and the detection-path measurement rule |

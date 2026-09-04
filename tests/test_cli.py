@@ -156,6 +156,42 @@ class TestVisibleCommand:
         assert not output.exists()
         assert "all" in result.output
 
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            ("partial", "overlapping residual still detected"),
+            ("unvalidated", "Post-removal validation unavailable"),
+        ],
+    )
+    def test_visible_auto_reports_non_clean_validation_status(self, runner, sample_png, tmp_path, status, expected):
+        from remove_ai_watermarks.watermark_registry import MarkRemovalResult, VisibleRemovalResult
+
+        output = tmp_path / "clean.png"
+        image = cv2.imread(str(sample_png), cv2.IMREAD_COLOR)
+        mark = MarkRemovalResult(
+            key="gemini",
+            label="Gemini visible watermark",
+            location="bottom-right",
+            region=(10, 10, 20, 20),
+            mask_bbox=(10, 10, 20, 20),
+            backend="cv2",
+            confidence_before=0.9,
+            confidence_after=0.6 if status == "partial" else None,
+            status=status,
+            residual_region=(12, 12, 10, 10) if status == "partial" else None,
+        )
+
+        def _fake_detailed(_source, destination, **_kwargs):
+            assert cv2.imwrite(str(destination), image)
+            return VisibleRemovalResult(image, (mark,))
+
+        with patch("remove_ai_watermarks.api.remove_visible_detailed", side_effect=_fake_detailed):
+            result = runner.invoke(main, ["visible", str(sample_png), "-o", str(output)])
+
+        assert result.exit_code == 0, result.output
+        assert expected in result.output
+        assert "Removed: Gemini visible watermark" not in result.output
+
     def test_visible_basic(self, runner, sample_png, tmp_path):
         output = tmp_path / "clean.png"
         result = runner.invoke(
@@ -772,6 +808,89 @@ class TestIdentifyCommand:
     def test_identify_nonexistent_file(self, runner):
         result = runner.invoke(main, ["identify", "/nonexistent/file.png"])
         assert result.exit_code != 0
+
+
+class TestDetectSynthIDCommandRemoved:
+    def test_command_is_not_registered(self, runner):
+        result = runner.invoke(main, ["detect-synthid", "--help"])
+        assert result.exit_code != 0
+        assert "No such command" in result.output
+
+
+class TestVerifyOpenAISynthIDCommand:
+    def test_help_names_upload_and_pixel_independence(self, runner):
+        result = runner.invoke(main, ["verify-openai-synthid", "--help"])
+
+        assert result.exit_code == 0
+        assert "--acknowledge-upload" in result.output
+        assert "independently of C2PA" in result.output
+
+    def test_upload_requires_explicit_acknowledgement(self, runner, tmp_clean_png, monkeypatch):
+        from remove_ai_watermarks import openai_provenance
+
+        called = False
+
+        def verify(_source, *, acknowledge_upload):
+            nonlocal called
+            assert acknowledge_upload is True
+            called = True
+
+        monkeypatch.setattr(openai_provenance, "verify_openai_synthid", verify)
+
+        result = runner.invoke(main, ["verify-openai-synthid", str(tmp_clean_png)])
+
+        assert result.exit_code != 0
+        assert "pass --acknowledge-upload" in result.output
+        assert called is False
+
+    def test_json_result_is_machine_readable(self, runner, tmp_clean_png, monkeypatch):
+        from remove_ai_watermarks import openai_provenance
+
+        expected = openai_provenance.OpenAISynthIDDetection(
+            status="not_detected",
+            model=None,
+            generated_at=None,
+            api_created_at=1_778_000_000,
+        )
+        monkeypatch.setattr(
+            openai_provenance,
+            "verify_openai_synthid",
+            lambda _source, *, acknowledge_upload: expected if acknowledge_upload else None,
+        )
+
+        result = runner.invoke(
+            main,
+            ["verify-openai-synthid", str(tmp_clean_png), "--acknowledge-upload", "--json"],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload == expected.to_dict()
+        assert "c2pa" not in payload
+
+    def test_text_result_preserves_negative_scope(self, runner, tmp_clean_png, monkeypatch):
+        from remove_ai_watermarks import openai_provenance
+
+        expected = openai_provenance.OpenAISynthIDDetection(
+            status="not_detected",
+            model=None,
+            generated_at=None,
+            api_created_at=None,
+        )
+        monkeypatch.setattr(
+            openai_provenance,
+            "verify_openai_synthid",
+            lambda _source, *, acknowledge_upload: expected if acknowledge_upload else None,
+        )
+
+        result = runner.invoke(
+            main,
+            ["verify-openai-synthid", str(tmp_clean_png), "--acknowledge-upload"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "AI provenance metadata was stripped" in result.output
+        assert "not proof" in result.output
 
 
 class TestBatchCommand:

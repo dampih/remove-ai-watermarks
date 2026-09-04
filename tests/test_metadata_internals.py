@@ -779,7 +779,7 @@ class TestC2paBufferScans:
         from remove_ai_watermarks._internal.c2pa import C2PA_SOFT_BINDINGS, soft_binding_vendors_in
 
         sig, name = next(iter(C2PA_SOFT_BINDINGS.items()))
-        assert name in soft_binding_vendors_in(b"...manifest..." + sig + b"...tail...")
+        assert name in soft_binding_vendors_in(b'...manifest:"' + sig + b'"...tail...')
         assert soft_binding_vendors_in(b"") == []
         assert soft_binding_vendors_in(b"no soft-binding assertion here") == []
 
@@ -791,6 +791,15 @@ class TestC2paBufferScans:
             "OpenAI"
         ]
         assert synthid_evidence_vendors_in(b"c2pa Google trainedAlgorithmicMedia") == ["Google LLC"]
+
+    def test_fingerprint_does_not_suppress_fallback_google_synthid(self):
+        from remove_ai_watermarks._internal.c2pa import _populate_registry_fields
+
+        info: dict[str, object] = {}
+        _populate_registry_fields(b"c2pa Google trainedAlgorithmicMedia io.iscc.v0", info)
+
+        assert info["soft_binding"] == "ISCC (content code)"
+        assert info["synthid_vendors"] == ["Google LLC"]
 
     def test_synthid_verdict_format(self):
         from remove_ai_watermarks._internal.c2pa import synthid_verdict

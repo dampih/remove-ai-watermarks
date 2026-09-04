@@ -1280,7 +1280,7 @@ class TestIdentifyXaiSignature:
 
 
 class TestIdentifySoftBinding:
-    """A C2PA soft-binding alg names a forensic-watermark vendor in the inventory."""
+    """C2PA soft-binding algorithms retain their registered kind in the report."""
 
     def test_soft_binding_vendor_listed(self, tmp_path: Path):
         p = tmp_path / "sb.jpg"
@@ -1288,6 +1288,17 @@ class TestIdentifySoftBinding:
         r = identify(p, check_visible=False, check_invisible=False)
         assert any("Digimarc" in w for w in r.watermarks)
         assert any(s.name == "soft_binding" for s in r.signals)
+
+    def test_fingerprint_is_not_listed_as_a_watermark(self, tmp_path: Path):
+        p = tmp_path / "fingerprint.jpg"
+        p.write_bytes(b"\xff\xd8\xff\xe1 c2pa jumb io.iscc.v0 \xff\xd9")
+
+        report = identify(p, check_visible=False, check_invisible=False)
+
+        signal = next(signal for signal in report.signals if signal.name == "soft_binding")
+        assert signal.detail.startswith("C2PA content fingerprint: ISCC (content code)")
+        assert not any("soft binding" in watermark.casefold() for watermark in report.watermarks)
+        assert any("fingerprint may still be recomputed" in caveat for caveat in report.caveats)
 
     def test_invismark_signal_lists_signed_watermark_id(self, tmp_path: Path):
         watermark_id = "83424621-03cb-40e3-9808-a9fae837156d"

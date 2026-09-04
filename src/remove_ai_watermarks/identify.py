@@ -33,7 +33,8 @@ from remove_ai_watermarks._internal.c2pa import (
     c2pa_info_has_removal_hint,
     cbor_text_after,
     extract_c2pa_info,
-    soft_binding_vendors_in,
+    soft_binding_labels,
+    soft_binding_registry_entries_in,
     synthid_evidence_vendors_in,
     synthid_verdict,
 )
@@ -157,8 +158,8 @@ _C2PA_CLOUD_CAVEAT = (
     "human edit, and reading it needs a network fetch this tool does not make."
 )
 _SOFT_BINDING_CAVEAT = (
-    "Removing the embedded C2PA manifest does not remove its soft binding: the named "
-    "watermark or fingerprint may remain in the pixels and re-link the asset to provenance."
+    "Removing the embedded C2PA manifest does not break its soft binding: a named watermark may remain in the pixels "
+    "or other media, while a content fingerprint may still be recomputed and re-link the asset to provenance."
 )
 _SAMSUNG_GENAI_CAVEAT = (
     "Samsung's genAIType marker shows a Galaxy AI editing tool (Generative Edit, "
@@ -1274,16 +1275,27 @@ def _identify_from_evidence(
     # the file path's answer must not move.
     trained_source = b"trainedAlgorithmicMedia" in head or b"TrainedAlgorithmicMedia" in head
     # Same suppression as every other inference site: bytes that name their own
-    # forensic soft-binding algorithm carry that vendor's mark, and the generic
-    # vendor-token inference must not add a second, differently-attributed
-    # invisible watermark (Microsoft Designer: "Azure OpenAI ImageGen" agent +
-    # the InvisMark watermarked action read as "SynthID per OpenAI").
-    soft_binding_vendors = soft_binding_vendors_in(region)
+    # watermark soft-binding carries that vendor's mark, and the generic
+    # vendor-token inference must not add a second, differently-attributed mark
+    # (Microsoft Designer: "Azure OpenAI ImageGen" agent + the InvisMark action
+    # read as "SynthID per OpenAI"). Fingerprints do not suppress independent
+    # SynthID evidence; an unknown algorithm stays fail-safe as a possible mark.
+    soft_binding_algorithm = meta.get("soft_binding_algorithm") or info.get("soft_binding_algorithm")
+    soft_binding_scan = region
+    if soft_binding_algorithm:
+        soft_binding_scan += b"\n" + str(soft_binding_algorithm).encode("utf-8", "replace")
+    soft_binding_entries = soft_binding_registry_entries_in(soft_binding_scan)
+    soft_binding_vendors = soft_binding_labels(soft_binding_entries)
+    soft_binding_watermarks = soft_binding_labels(soft_binding_entries, kind="watermark")
+    soft_binding_fingerprints = soft_binding_labels(soft_binding_entries, kind="fingerprint")
+    soft_binding_blocks_synthid = bool(soft_binding_watermarks) or bool(
+        soft_binding_algorithm and not soft_binding_entries
+    )
     if (
         not synthid
         and trained_source
         and c2pa_marker_in(head)
-        and not soft_binding_vendors
+        and not soft_binding_blocks_synthid
         and (vendors := synthid_evidence_vendors_in(region))
     ):
         synthid = synthid_verdict(", ".join(vendors))
@@ -1297,20 +1309,23 @@ def _identify_from_evidence(
         if c2pa_usable and (v := _vendor_of(synthid)):
             ai_vendor_claims["synthid"] = v
 
-    # ── C2PA soft-binding: a named forensic/third-party watermark vendor ─
-    # (Adobe TrustMark, Digimarc, Imatag, ...). Present in the manifest even when
-    # the watermark itself can't be decoded; names whose watermark stamped the pixels.
+    # ── C2PA soft-binding: a registered watermark or content fingerprint ─
+    # Present in the manifest even when the binding cannot be resolved locally.
     soft_binding = meta.get("soft_binding") or (", ".join(soft_binding_vendors) if soft_binding_vendors else None)
     if soft_binding:
-        soft_binding_algorithm = meta.get("soft_binding_algorithm") or info.get("soft_binding_algorithm")
         soft_binding_value = meta.get("soft_binding_value") or info.get("soft_binding_value")
         soft_binding_details = "; ".join(
             str(value) for value in (soft_binding, soft_binding_algorithm, soft_binding_value) if value
         )
+        signal_prefix = (
+            "C2PA content fingerprint"
+            if soft_binding_fingerprints and not soft_binding_watermarks
+            else "C2PA soft binding"
+        )
         signals.append(
             Signal(
                 "soft_binding",
-                f"C2PA soft binding: {soft_binding_details}",
+                f"{signal_prefix}: {soft_binding_details}",
                 "high" if c2pa_level == "verified" else "medium",
             )
         )
@@ -1325,7 +1340,11 @@ def _identify_from_evidence(
                     "high" if c2pa_level == "verified" else "medium",
                 )
             )
-        watermarks.append(f"Forensic watermark soft binding ({soft_binding_details})")
+        if soft_binding_watermarks:
+            watermark_details = (
+                soft_binding_details if not soft_binding_fingerprints else ", ".join(soft_binding_watermarks)
+            )
+            watermarks.append(f"Forensic watermark soft binding ({watermark_details})")
         caveats.append(_SOFT_BINDING_CAVEAT)
 
     # ── IPTC "Made with AI" (Meta etc.), only meaningful without C2PA ─

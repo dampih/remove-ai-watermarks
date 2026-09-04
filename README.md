@@ -7,8 +7,8 @@ Remove AI provenance marks from images and video you generated yourself:
 - C2PA, EXIF, XMP, IPTC, and related AI metadata.
 
 Video support covers provenance identification, complete visible-plus-metadata
-cleaning, directory batches, visible Sora, Veo, Seedance, Dola, Hailuo AI, and
-Kling AI mark removal, and oracle-certified VAE regeneration for video SynthID
+cleaning, directory batches, visible Sora, Veo, Seedance, Doubao, Dola,
+Hailuo AI, and Kling AI mark removal, and oracle-certified VAE regeneration for video SynthID
 removal.
 
 > [raiw.cc](https://raiw.cc) runs this library as a hosted service, with the GPU
@@ -32,6 +32,8 @@ removal.
 | Goal | Command | GPU |
 | --- | --- | --- |
 | Find provenance signals and watermarks | `identify` | No |
+| Classify a photograph from pixels (opt-in, not provenance) | `classify` | No |
+| Verify supported OpenAI SynthID from pixels with the official remote API | `verify-openai-synthid` | No |
 | Remove known visible AI marks | `visible` | No |
 | Erase a region you select | `erase` | No |
 | Strip AI metadata | `metadata` | No |
@@ -54,6 +56,8 @@ its linked C2PA manifest; metadata stripping alone removes only the manifest.
 | Need | Install |
 | --- | --- |
 | Metadata inspection and stripping | `remove-ai-watermarks` |
+| Photograph AI-versus-camera classification | `remove-ai-watermarks[classify]` |
+| Official remote OpenAI SynthID verification | `remove-ai-watermarks[verify]` |
 | Visible detection and removal | `remove-ai-watermarks[visible]` |
 | Visible video processing | `remove-ai-watermarks[video]` |
 | Video SynthID removal | `remove-ai-watermarks[video,diffusion]` |
@@ -79,6 +83,34 @@ Inspect an image:
 ```bash
 remove-ai-watermarks identify image.png
 ```
+
+To classify a photograph from pixels (AI versus camera, optional provider),
+install the extra and call `classify`. `identify` never starts it:
+
+```bash
+uv tool install --force "remove-ai-watermarks[classify]"
+remove-ai-watermarks classify image.png
+```
+
+Guide: [photo pixel classification](docs/photo-classify.md).
+
+Signed provenance is the supported route for SynthID and `identify` reads it.
+There is no local SynthID pixel detector in the package. Research on a
+periodic lattice expert is in `scripts/synthid_runtime/` and
+[synthid-detector-research.md](docs/synthid-detector-research.md).
+
+For supported OpenAI images, the optional official verifier provides a pixel
+watermark verdict:
+
+```bash
+uv tool install --force "remove-ai-watermarks[verify]"
+remove-ai-watermarks verify-openai-synthid image.png --acknowledge-upload
+```
+
+The command removes AI provenance metadata from a temporary copy, verifies that
+the decoded pixels are unchanged, uploads only that copy to OpenAI, and consumes
+only the independent SynthID response. It never runs implicitly from `identify`.
+An API key, endpoint access, and explicit upload acknowledgement are required.
 
 For visible watermark removal, install the pixel dependencies:
 
@@ -369,6 +401,12 @@ import remove_ai_watermarks as raiw
 result, removed = raiw.remove_visible("watermarked.png", "clean.png")
 print(removed)
 
+report = raiw.remove_visible_detailed("watermarked.png", "clean.png")
+print(report.status)  # cleaned | partial | unvalidated | no_watermark
+
+openai_synthid = raiw.verify_openai_synthid("image.png", acknowledge_upload=True)
+print(openai_synthid.status)
+
 provenance = raiw.identify_video("input.mp4")
 report = raiw.inspect_video_metadata("input.mp4")
 complete = raiw.remove_video_all("input.mp4", "clean.mp4")
@@ -411,7 +449,7 @@ invisible removal.
   detail.
 - Visible video removal recognizes the moving Sora 2 wordmark, the current Veo
   diamond plus legacy `Veo` text, the Seedance boxed `AI` label, and the fixed
-  Dola, Hailuo AI, and Kling AI labels. It does not recognize the older Sora Turbo
+  Doubao, Dola, Hailuo AI, and Kling AI labels. It does not recognize the older Sora Turbo
   corner swirl or unregistered layouts from those providers.
   The classical OpenCV backend can smear structured backgrounds; use MI-GAN or
   LaMa when recovery quality matters.
@@ -451,8 +489,11 @@ reinterpret the pixel result returned `UNAVAILABLE`; that follow-up was not a
 verifier rerun and does not invalidate the built-in verdicts. A 2026-07-31
 full-clip check on a public eight-second Veo sample found `0.10` still detected
 and `0.15` not detected, so `0.15` is now the certified default. The
-reproducible hashes and verdicts live in
-`data/evaluations/video-synthid-oracle.csv`.
+reproducible hashes and verdicts for that full-clip check -- one carrier, two
+rows -- live in `data/evaluations/video-synthid-oracle.csv`. The earlier
+two-clip calibration is narrative only: its verdicts were not recorded in a
+tracked manifest, so treat the certified default as resting on the 2026-07-31
+rows.
 
 ## Documentation
 

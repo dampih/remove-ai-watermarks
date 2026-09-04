@@ -475,6 +475,51 @@ That is not a YuNet split: `face_count > 0` would over-strengthen the
 spread (0.075 - 0.06) is already absorbed by the shipped 0.09 floor.
 Images API generations remain non-carriers (C2PA only).
 
+## Content-balanced engine selection check (2026-08-31)
+
+The earlier tables were intentionally carrier-focused and therefore small. A
+separate discovery pass tested whether ordinary image content contradicts the
+cohort choice at the shipped floors. The tracked matrix contains 19 prompts,
+matched across OpenAI `gpt-image-1-mini` and Meta `muse-image-1.0`, spanning
+photoreal scenes, faces, action, text-like flat art, products, architecture,
+watercolor, and surreal illustration. These files were re-encoded by collection
+and are not signal carriers, so this pass measures fidelity only; removal remains
+established by the provider-oracle calibration above.
+
+Qwen and Chroma ran in separate sequential H100 invocations, once per source,
+with the production provider floor and fixed seed. The comparison isolated the
+global stage because both profiles inherit the same source-based Z-Image face
+repair. Per-image differences, rather than differences between aggregate means,
+were evaluated with exact two-sided sign tests:
+
+| provider | metric | Chroma wins | Qwen wins | two-sided p |
+|---|---|---:|---:|---:|
+| OpenAI | SSIM | 19 | 0 | 0.0000038 |
+| OpenAI | PSNR | 19 | 0 | 0.0000038 |
+| OpenAI | MAE | 18 | 1 | 0.000076 |
+| OpenAI | edge F1 | 15 | 4 | 0.019 |
+| OpenAI | LPIPS | 12 | 7 | 0.359 |
+| Meta | LPIPS | 1 | 18 | 0.000076 |
+| Meta | edge F1 | 1 | 18 | 0.000076 |
+| Meta | SSIM | 5 | 14 | 0.064 |
+
+Meta's remaining pixel metrics disagree: Chroma wins PSNR on 16/19 and MAE on
+14/19, while losing both perceptual distance and edge preservation on 18/19 at
+its higher removal floor. This is not evidence for a genre classifier. The
+direction instead follows the already measured provenance cohort: Chroma for
+OpenAI, Qwen for Meta. On OpenAI, the seven LPIPS exceptions include unrelated
+classes (landscape, sport, low-light interior, watercolor, monochrome portrait,
+surreal art, and brutalism), while Chroma still wins SSIM and PSNR on every one;
+there is no coherent input feature that justifies overriding the cohort choice.
+
+Inputs and integrity manifests are under
+`data/evaluations/engine-selection/`. Raw generated outputs remain gitignored
+under `out/engine-selection-study/`; `scripts/engine_selection_study.py`
+reproduces the run and `scripts/analyze_engine_selection_study.py` reproduces
+the paired statistics. One generation per prompt is a discovery set, not a
+license to fit thresholds. Any future content override must first predict a
+rule here and then survive unused generation indices without changing it.
+
 ## Oracle session notes
 
 - openai.com/verify throttles anonymous sessions through Cloudflare Turnstile
