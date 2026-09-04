@@ -3473,6 +3473,7 @@ requires-dist = [
     { name = "remove-ai-watermarks", extras = ["pixels"], marker = "extra == 'visible'" },
     { name = "remove-ai-watermarks", extras = ["qwen-zimage", "lama"], marker = "extra == 'text-restoration'" },
     { name = "remove-ai-watermarks", extras = ["video"], marker = "extra == 'dev'" },
+    { name = "remove-ai-watermarks", extras = ["video"], marker = "extra == 'gui'" },
     { name = "remove-ai-watermarks", extras = ["video", "heif", "detect", "trustmark", "text-restoration", "migan", "classify", "verify"], marker = "extra == 'all'" },
     { name = "remove-ai-watermarks", extras = ["visible"], marker = "extra == 'lama'" },
     { name = "remove-ai-watermarks", extras = ["visible"], marker = "extra == 'migan'" },
@@ -3489,7 +3490,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'diffusion'", specifier = ">=5,<6" },
     { name = "trustmark", marker = "python_full_version < '3.13' and extra == 'trustmark'", specifier = ">=0.8.0" },
 ]
-provides-extras = ["pixels", "heif", "visible", "video", "detect", "diffusion", "qwen-zimage", "text-restoration", "text-draft", "trustmark", "classify", "verify", "lama", "migan", "dev", "all"]
+provides-extras = ["pixels", "heif", "visible", "gui", "video", "detect", "diffusion", "qwen-zimage", "text-restoration", "text-draft", "trustmark", "classify", "verify", "lama", "migan", "dev", "all"]
 
 [[package]]
 name = "requests"
